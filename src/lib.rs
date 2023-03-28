@@ -51,6 +51,11 @@ impl I8080 {
             0x11 => {self.lxi(RegisterPair::D); 10},                    // LXI D,d16
             0x21 => {self.lxi(RegisterPair::H); 10},                    // LXI D,d16
             0x31 => {self.lxi_sp(); 10},                                // LXI SP,d16
+                                                                        
+            0xC1 => {self.pop(RegisterPair::B); 10},                    // POP B
+            0xD1 => {self.pop(RegisterPair::D); 10},                    // POP D
+            0xE1 => {self.pop(RegisterPair::H); 10},                    // POP H
+            0xF1 => {self.pop(RegisterPair::PSW); 10},                  // POP PSW
             _ => {eprintln!("Invalid opcode: {opcode}"); 0}
         };
 
@@ -63,6 +68,10 @@ impl I8080 {
     
     fn read_u16(&self, location: u16) -> u16 {
         ((self.memory[(location + 1) as usize] as u16) << 8) | self.memory[location as usize] as u16
+    }
+    
+    fn write_u8(&mut self, location: u16, value: u8) {
+        self.memory[location as usize] = value;
     }
 
     fn next_u8(&mut self) -> u8 {
@@ -101,6 +110,13 @@ impl I8080 {
     fn lxi_sp(&mut self) {
         self.sp = self.next_u16();
     }
+
+    fn pop(&mut self, pair: RegisterPair) {
+        eprintln!("{}",self.sp);
+        let value = self.read_u16(self.sp);
+        self.set_register_pair(pair, value);
+        self.sp += 2;
+    }
 }
 
 #[cfg(test)]
@@ -108,11 +124,19 @@ mod tests {
     use super::*;
 
     const TESTS_DEFAULT_MEMORY_SIZE: usize = 1024;
+    const TESTS_DEFAULT_SP: u16 = TESTS_DEFAULT_MEMORY_SIZE as u16 / 2;
     macro_rules! i8080 {
-        () => (I8080::new(TESTS_DEFAULT_MEMORY_SIZE));
+        () => {
+            {
+                let mut i8080 = I8080::new(TESTS_DEFAULT_MEMORY_SIZE);
+                i8080.sp = TESTS_DEFAULT_SP;
+                i8080
+            }
+        };
         ( $( $x:expr ), * ) => {
             {
                 let mut i8080 = I8080::new(TESTS_DEFAULT_MEMORY_SIZE);
+                i8080.sp = TESTS_DEFAULT_SP;
                 let mut index = 0;
                 $(
                     #[allow(unused_assignments)]
@@ -153,6 +177,16 @@ mod tests {
             let mut i8080 = i8080![0xBC, 0x3A];
             i8080.lxi_sp();
             assert_eq!(i8080.sp, 0x3ABC);
+        }
+        #[test]
+        fn pop() {
+            let mut i8080 = i8080!();
+            i8080.write_u8(i8080.sp, 0x3D);
+            i8080.write_u8(i8080.sp + 1, 0x93);
+            i8080.pop(RegisterPair::H);
+            assert_eq!(i8080.h, 0x93);
+            assert_eq!(i8080.l, 0x3D);
+            assert_eq!(i8080.sp, TESTS_DEFAULT_SP + 2);
         }
     }
 }
