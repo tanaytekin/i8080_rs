@@ -39,6 +39,7 @@ impl I8080 {
 
         let opcode = self.next_u8();
         let cycles = match opcode {
+            0x00 | 0x10 | 0x20 | 0x30 | 0x08 | 0x18 | 0x28 | 0x38 => 4, // NOP
             _ => {eprintln!("Invalid opcode: {opcode}"); 0}
         };
 
