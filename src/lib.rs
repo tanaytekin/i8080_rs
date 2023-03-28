@@ -30,4 +30,28 @@ impl I8080 {
             memory: vec![0; memory_size].into_boxed_slice(),
         }
     }
+
+    pub fn cycle(&mut self) {
+        if self.cycles > 0 {
+            self.cycles -= 1;
+            return;
+        }
+
+        let opcode = self.next_u8();
+        let cycles = match opcode {
+            _ => {eprintln!("Invalid opcode: {opcode}"); 0}
+        };
+
+        self.cycles += cycles;
+    }
+
+    fn read_u8(&self, location: u16) -> u8 {
+        self.memory[location as usize]
+    }
+
+    fn next_u8(&mut self) -> u8 {
+        let value = self.read_u8(self.pc);
+        self.pc += 1;
+        value
+    }
 }
