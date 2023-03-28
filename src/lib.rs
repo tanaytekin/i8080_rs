@@ -56,6 +56,12 @@ impl I8080 {
             0xD1 => {self.pop(RegisterPair::D); 10},                    // POP D
             0xE1 => {self.pop(RegisterPair::H); 10},                    // POP H
             0xF1 => {self.pop(RegisterPair::PSW); 10},                  // POP PSW
+            
+            0xC5 => {self.push(RegisterPair::B); 11},                   // PUSH B
+            0xD5 => {self.push(RegisterPair::D); 11},                   // PUSH D
+            0xE5 => {self.push(RegisterPair::H); 11},                   // PUSH H
+            0xF5 => {self.push(RegisterPair::PSW); 11},                 // PUSH PSW
+            
             _ => {eprintln!("Invalid opcode: {opcode}"); 0}
         };
 
@@ -73,6 +79,12 @@ impl I8080 {
     fn write_u8(&mut self, location: u16, value: u8) {
         self.memory[location as usize] = value;
     }
+    
+    fn write_u16(&mut self, location: u16, value: u16) {
+        let value = value.to_le_bytes();
+        self.memory[location as usize] = value[0];
+        self.memory[(location + 1) as usize] = value[1];
+    }
 
     fn next_u8(&mut self) -> u8 {
         let value = self.read_u8(self.pc);
@@ -85,7 +97,16 @@ impl I8080 {
         self.pc += 2;
         value
     }
-
+ 
+    fn register_pair_to_refs(&self, pair: RegisterPair) -> (&u8, &u8) {
+        match pair {
+            RegisterPair::B => (&self.b, &self.c),
+            RegisterPair::D => (&self.d, &self.e),
+            RegisterPair::H => (&self.h, &self.l),
+            RegisterPair::PSW => (&self.a, &self.flags),
+        }
+    }
+    
     fn register_pair_to_mut_refs(&mut self, pair: RegisterPair) -> (&mut u8, &mut u8) {
         match pair {
             RegisterPair::B => (&mut self.b, &mut self.c),
@@ -102,6 +123,11 @@ impl I8080 {
         *high = value[1];
     }
 
+    fn get_register_pair(&mut self, pair: RegisterPair) -> u16 {
+        let (high, low) = self.register_pair_to_refs(pair);
+        ((*high as u16) << 8) | (*low as u16)
+    }
+
     fn lxi(&mut self, pair: RegisterPair) {
         let value = self.next_u16();
         self.set_register_pair(pair, value);
@@ -116,6 +142,12 @@ impl I8080 {
         let value = self.read_u16(self.sp);
         self.set_register_pair(pair, value);
         self.sp += 2;
+    }
+
+    fn push(&mut self, pair: RegisterPair) {
+        let value = self.get_register_pair(pair);
+        self.sp -= 2;
+        self.write_u16(self.sp, value);
     }
 }
 
@@ -187,6 +219,19 @@ mod tests {
             assert_eq!(i8080.h, 0x93);
             assert_eq!(i8080.l, 0x3D);
             assert_eq!(i8080.sp, TESTS_DEFAULT_SP + 2);
+        }
+
+        #[test]
+        fn push() {
+            let mut i8080 = i8080!();
+            i8080.d = 0x8F;
+            i8080.e = 0x9D;
+            i8080.push(RegisterPair::D);
+            assert_eq!(i8080.d, 0x8F);
+            assert_eq!(i8080.e, 0x9D);
+            assert_eq!(i8080.sp, TESTS_DEFAULT_SP - 2);
+            assert_eq!(i8080.read_u8(i8080.sp), 0x9D);
+            assert_eq!(i8080.read_u8(i8080.sp + 1), 0x8F);
         }
     }
 }
