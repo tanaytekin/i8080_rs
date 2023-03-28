@@ -66,6 +66,7 @@ impl I8080 {
             0x2A => {self.lhld(); 16},                                  // LHLD a16
             0xE3 => {self.xthl(); 18},                                  // XTHL
             0xF9 => {self.sphl(); 5},                                   // SPHL
+            0xEB => {self.xchg(); 5},                                   // XCHG
             _ => {eprintln!("Invalid opcode: {opcode}"); 0}
         };
 
@@ -175,6 +176,13 @@ impl I8080 {
 
     fn sphl(&mut self) {
         self.sp = self.get_register_pair(RegisterPair::H);
+    }
+
+    fn xchg(&mut self) {
+        let hl = self.get_register_pair(RegisterPair::H);
+        let de = self.get_register_pair(RegisterPair::D);
+        self.set_register_pair(RegisterPair::H, de);
+        self.set_register_pair(RegisterPair::D, hl);
     }
 }
 
@@ -298,6 +306,19 @@ mod tests {
             i8080.l = 0x6C;
             i8080.sphl();
             assert_eq!(i8080.sp, 0x506C);
+        }
+        #[test]
+        fn xchg() {
+            let mut i8080 = i8080!();
+            i8080.d = 0x33;
+            i8080.e = 0x55;
+            i8080.h = 0x00;
+            i8080.l = 0xFF;
+            i8080.xchg();
+            assert_eq!(i8080.d, 0x00);
+            assert_eq!(i8080.e, 0xFF);
+            assert_eq!(i8080.h, 0x33);
+            assert_eq!(i8080.l, 0x55);
         }
     }
 }
