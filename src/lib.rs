@@ -62,6 +62,7 @@ impl I8080 {
             0xE5 => {self.push(RegisterPair::H); 11},                   // PUSH H
             0xF5 => {self.push(RegisterPair::PSW); 11},                 // PUSH PSW
             
+            0x22 => {self.shld(); 16},                                  // SHLD a16
             _ => {eprintln!("Invalid opcode: {opcode}"); 0}
         };
 
@@ -149,6 +150,12 @@ impl I8080 {
         self.sp -= 2;
         self.write_u16(self.sp, value);
     }
+
+    fn shld(&mut self) {
+        let location = self.next_u16();
+        let value = self.get_register_pair(RegisterPair::H);
+        self.write_u16(location, value);
+    }
 }
 
 #[cfg(test)]
@@ -232,6 +239,15 @@ mod tests {
             assert_eq!(i8080.sp, TESTS_DEFAULT_SP - 2);
             assert_eq!(i8080.read_u8(i8080.sp), 0x9D);
             assert_eq!(i8080.read_u8(i8080.sp + 1), 0x8F);
+        }
+        #[test]
+        fn shld() {
+            let mut i8080 = i8080![0xA, 0x1];
+            i8080.h = 0xAE;
+            i8080.l = 0x29;
+            i8080.shld();
+            assert_eq!(i8080.read_u8(0x10A), 0x29);
+            assert_eq!(i8080.read_u8(0x10B), 0xAE);
         }
     }
 }
