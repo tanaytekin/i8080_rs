@@ -70,6 +70,8 @@ impl I8080 {
 
             0x02 => {self.stax(RegisterPair::B); 7},                    // STAX B
             0x12 => {self.stax(RegisterPair::D); 7},                    // STAX B
+            0x0A => {self.ldax(RegisterPair::B); 7},                    // LDAX B
+            0x1A => {self.ldax(RegisterPair::D); 7},                    // LDAX B
             _ => {eprintln!("Invalid opcode: {opcode}"); 0}
         };
 
@@ -191,6 +193,11 @@ impl I8080 {
     fn stax(&mut self, pair: RegisterPair) {
         let location = self.get_register_pair(pair);
         self.write_u8(location, self.a);
+    }
+    
+    fn ldax(&mut self, pair: RegisterPair) {
+        let location = self.get_register_pair(pair);
+        self.a = self.read_u8(location);
     }
 }
 
@@ -335,6 +342,15 @@ mod tests {
             i8080.b = 0x02;
             i8080.c = 0x16;
             i8080.stax(RegisterPair::B);
+            assert_eq!(i8080.read_u8(0x0216), i8080.a);
+        }
+        #[test]
+        fn ldax() {
+            let mut i8080 = i8080!();
+            i8080.write_u8(0x0216, 0xCC);
+            i8080.d = 0x02;
+            i8080.e = 0x16;
+            i8080.ldax(RegisterPair::D);
             assert_eq!(i8080.read_u8(0x0216), i8080.a);
         }
     }
