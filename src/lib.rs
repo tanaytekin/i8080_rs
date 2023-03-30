@@ -87,7 +87,7 @@ impl I8080 {
             0x06 => {self.mvi(Register::B); 7},                         // MVI B,d8
             0x16 => {self.mvi(Register::D); 7},                         // MVI D,d8
             0x26 => {self.mvi(Register::H); 7},                         // MVI H,d8
-            0x36 => {self.mvi_m(); 7},                                  // MVI M,d8
+            0x36 => {self.mvi_m(); 10},                                 // MVI M,d8
             0x0E => {self.mvi(Register::C); 7},                         // MVI C,d8
             0x1E => {self.mvi(Register::E); 7},                         // MVI E,d8
             0x2E => {self.mvi(Register::L); 7},                         // MVI L,d8
