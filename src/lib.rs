@@ -62,17 +62,17 @@ impl I8080 {
             0x11 => {self.lxi(RegisterPair::D); 10},                    // LXI D,d16
             0x21 => {self.lxi(RegisterPair::H); 10},                    // LXI D,d16
             0x31 => {self.lxi_sp(); 10},                                // LXI SP,d16
-                                                                        
+ 
             0xC1 => {self.pop(RegisterPair::B); 10},                    // POP B
             0xD1 => {self.pop(RegisterPair::D); 10},                    // POP D
             0xE1 => {self.pop(RegisterPair::H); 10},                    // POP H
             0xF1 => {self.pop(RegisterPair::PSW); 10},                  // POP PSW
-            
+
             0xC5 => {self.push(RegisterPair::B); 11},                   // PUSH B
             0xD5 => {self.push(RegisterPair::D); 11},                   // PUSH D
             0xE5 => {self.push(RegisterPair::H); 11},                   // PUSH H
             0xF5 => {self.push(RegisterPair::PSW); 11},                 // PUSH PSW
-            
+ 
             0x22 => {self.shld(); 16},                                  // SHLD a16
             0x2A => {self.lhld(); 16},                                  // LHLD a16
             0xE3 => {self.xthl(); 18},                                  // XTHL
@@ -80,9 +80,9 @@ impl I8080 {
             0xEB => {self.xchg(); 5},                                   // XCHG
 
             0x02 => {self.stax(RegisterPair::B); 7},                    // STAX B
-            0x12 => {self.stax(RegisterPair::D); 7},                    // STAX B
+            0x12 => {self.stax(RegisterPair::D); 7},                    // STAX D
             0x0A => {self.ldax(RegisterPair::B); 7},                    // LDAX B
-            0x1A => {self.ldax(RegisterPair::D); 7},                    // LDAX B
+            0x1A => {self.ldax(RegisterPair::D); 7},                    // LDAX D
 
             0x06 => {self.mvi(Register::B); 7},                         // MVI B,d8
             0x16 => {self.mvi(Register::D); 7},                         // MVI D,d8
@@ -101,15 +101,15 @@ impl I8080 {
     fn read_u8(&self, location: u16) -> u8 {
         self.memory[location as usize]
     }
-    
+
     fn read_u16(&self, location: u16) -> u16 {
         ((self.memory[(location + 1) as usize] as u16) << 8) | self.memory[location as usize] as u16
     }
-    
+
     fn write_u8(&mut self, location: u16, value: u8) {
         self.memory[location as usize] = value;
     }
-    
+
     fn write_u16(&mut self, location: u16, value: u16) {
         let value = value.to_le_bytes();
         self.memory[location as usize] = value[0];
@@ -202,7 +202,6 @@ impl I8080 {
     }
 
     fn pop(&mut self, pair: RegisterPair) {
-        eprintln!("{}",self.sp);
         let value = self.read_u16(self.sp);
         self.set_register_pair(pair, value);
         self.sp += 2;
