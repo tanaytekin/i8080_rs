@@ -1,3 +1,14 @@
+enum Register {
+    A,
+    F,
+    B,
+    C,
+    D,
+    E,
+    H,
+    L,
+}
+
 enum RegisterPair {
     B,
     D,
@@ -72,6 +83,15 @@ impl I8080 {
             0x12 => {self.stax(RegisterPair::D); 7},                    // STAX B
             0x0A => {self.ldax(RegisterPair::B); 7},                    // LDAX B
             0x1A => {self.ldax(RegisterPair::D); 7},                    // LDAX B
+
+            0x06 => {self.mvi(Register::B); 7},                         // MVI B,d8
+            0x16 => {self.mvi(Register::D); 7},                         // MVI D,d8
+            0x26 => {self.mvi(Register::H); 7},                         // MVI H,d8
+            0x36 => {self.mvi_m(); 7},                                  // MVI M,d8
+            0x0E => {self.mvi(Register::C); 7},                         // MVI C,d8
+            0x1E => {self.mvi(Register::E); 7},                         // MVI E,d8
+            0x2E => {self.mvi(Register::L); 7},                         // MVI L,d8
+            0x3E => {self.mvi(Register::A); 7},                         // MVI A,d8
             _ => {eprintln!("Invalid opcode: {opcode}"); 0}
         };
 
@@ -106,6 +126,40 @@ impl I8080 {
         let value = self.read_u16(self.pc);
         self.pc += 2;
         value
+    }
+
+    fn register_to_ref(&self, register: Register) -> &u8 {
+        match register {
+            Register::A => &self.a,
+            Register::F => &self.flags,
+            Register::B => &self.b,
+            Register::C => &self.c,
+            Register::D => &self.d,
+            Register::E => &self.e,
+            Register::H => &self.h,
+            Register::L => &self.l,
+        }
+    }
+
+    fn register_to_mut_ref(&mut self, register: Register) -> &mut u8 {
+        match register {
+            Register::A => &mut self.a,
+            Register::F => &mut self.flags,
+            Register::B => &mut self.b,
+            Register::C => &mut self.c,
+            Register::D => &mut self.d,
+            Register::E => &mut self.e,
+            Register::H => &mut self.h,
+            Register::L => &mut self.l,
+        }
+    }
+
+    fn set_register(&mut self, register: Register, value: u8) {
+        *self.register_to_mut_ref(register) = value;
+    }
+ 
+    fn get_register(&mut self, register: Register) -> u8 {
+        *self.register_to_ref(register)
     }
  
     fn register_pair_to_refs(&self, pair: RegisterPair) -> (&u8, &u8) {
@@ -198,6 +252,17 @@ impl I8080 {
     fn ldax(&mut self, pair: RegisterPair) {
         let location = self.get_register_pair(pair);
         self.a = self.read_u8(location);
+    }
+
+    fn mvi(&mut self, register: Register) {
+        let value = self.next_u8();
+        self.set_register(register, value);
+    }
+ 
+    fn mvi_m(&mut self) {
+        let location = self.get_register_pair(RegisterPair::H);
+        let value = self.next_u8();
+        self.write_u8(location , value);
     }
 }
 
@@ -352,6 +417,16 @@ mod tests {
             i8080.e = 0x16;
             i8080.ldax(RegisterPair::D);
             assert_eq!(i8080.read_u8(0x0216), i8080.a);
+        }
+        #[test]
+        fn mvi() {
+            let mut i8080 = i8080![0x02, 0x34, 0xCC];
+            i8080.mvi(Register::H);
+            assert_eq!(i8080.get_register(Register::H), 0x02);
+            i8080.mvi(Register::L);
+            assert_eq!(i8080.get_register(Register::L), 0x34);
+            i8080.mvi_m();
+            assert_eq!(i8080.read_u8(0x0234), 0xCC);
         }
     }
 }
