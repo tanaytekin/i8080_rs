@@ -94,6 +94,7 @@ impl I8080 {
             0x3E => {self.mvi(Register::A); 7},                         // MVI A,d8
  
             0x32 => {self.sta(); 13},                                   // STA a16
+            0x3A => {self.lda(); 13},                                   // LDA a16
             _ => {eprintln!("Invalid opcode: {opcode}"); 0}
         };
 
@@ -270,6 +271,11 @@ impl I8080 {
         let location = self.get_register_pair(RegisterPair::H);
         self.write_u8(location, self.a);
     }
+
+    fn lda(&mut self) {
+        let location = self.get_register_pair(RegisterPair::H);
+        self.a = self.read_u8(location);
+    }
 }
 
 #[cfg(test)]
@@ -441,6 +447,14 @@ mod tests {
             i8080.set_register(Register::A, 0x12);
             i8080.sta();
             assert_eq!(i8080.get_register(Register::A), i8080.read_u8(0x0234));
+        }
+        #[test]
+        fn lda() {
+            let mut i8080 = i8080!();
+            i8080.write_u8(0x300, 0xFE);
+            i8080.set_register_pair(RegisterPair::H, 0x300);
+            i8080.lda();
+            assert_eq!(i8080.get_register(Register::A), i8080.read_u8(0x300));
         }
     }
 }
