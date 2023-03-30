@@ -95,6 +95,85 @@ impl I8080 {
  
             0x32 => {self.sta(); 13},                                   // STA a16
             0x3A => {self.lda(); 13},                                   // LDA a16
+
+            0x40 => 5,                                                  // MOV B,B
+            0x50 => {self.mov(Register::D, Register::B); 5},            // MOV D,B
+            0x60 => {self.mov(Register::H, Register::B); 5},            // MOV H,B
+            0x70 => {self.mov_m(Register::B); 7},                       // MOV M,B
+
+            0x41 => {self.mov(Register::B, Register::C); 5},            // MOV B,C
+            0x51 => {self.mov(Register::D, Register::C); 5},            // MOV D,C
+            0x61 => {self.mov(Register::H, Register::C); 5},            // MOV H,C
+            0x71 => {self.mov_m(Register::C); 7},                       // MOV M,C
+
+            0x42 => {self.mov(Register::B, Register::D); 5},            // MOV B,D
+            0x52 =>  5,                                                 // MOV D,D
+            0x62 => {self.mov(Register::H, Register::D); 5},            // MOV H,D
+            0x72 => {self.mov_m(Register::D); 7},                       // MOV M,D
+            
+            0x43 => {self.mov(Register::B, Register::E); 5},            // MOV B,E
+            0x53 => {self.mov(Register::D, Register::E); 5},            // MOV D,E
+            0x63 => {self.mov(Register::H, Register::E); 5},            // MOV H,E
+            0x73 => {self.mov_m(Register::E); 7},                       // MOV M,E
+
+            0x44 => {self.mov(Register::B, Register::H); 5},            // MOV B,H
+            0x54 => {self.mov(Register::D, Register::H); 5},            // MOV H,H
+            0x64 =>  5,                                                 // MOV D,H
+            0x74 => {self.mov_m(Register::H); 7},                       // MOV M,H
+            
+            0x45 => {self.mov(Register::B, Register::L); 5},            // MOV B,L
+            0x55 => {self.mov(Register::D, Register::L); 5},            // MOV D,L
+            0x65 => {self.mov(Register::H, Register::L); 5},            // MOV H,L
+            0x75 => {self.mov_m(Register::L); 7},                       // MOV M,L
+                                                                        
+            0x46 => {self.mov_m(Register::B); 7},                       // MOV B,M
+            0x56 => {self.mov_m(Register::D); 7},                       // MOV D,M
+            0x66 => {self.mov_m(Register::H); 7},                       // MOV H,M
+            
+            0x47 => {self.mov(Register::B, Register::A); 5},            // MOV B,A
+            0x57 => {self.mov(Register::D, Register::A); 5},            // MOV D,A
+            0x67 => {self.mov(Register::H, Register::A); 5},            // MOV H,A
+            0x77 => {self.mov_m(Register::A); 7},                       // MOV M,A
+            
+            0x48 => {self.mov(Register::C, Register::B); 5},            // MOV C,B
+            0x58 => {self.mov(Register::E, Register::B); 5},            // MOV E,B
+            0x68 => {self.mov(Register::L, Register::B); 5},            // MOV L,B
+            0x78 => {self.mov(Register::A, Register::B); 5},            // MOV A,B
+            
+            0x49 => 5,                                                  // MOV C,C
+            0x59 => {self.mov(Register::E, Register::C); 5},            // MOV E,C
+            0x69 => {self.mov(Register::L, Register::C); 5},            // MOV L,C
+            0x79 => {self.mov(Register::A, Register::C); 5},            // MOV A,C
+            
+            0x4A => {self.mov(Register::C, Register::D); 5},            // MOV C,D
+            0x5A => {self.mov(Register::E, Register::D); 5},            // MOV E,D
+            0x6A => {self.mov(Register::L, Register::D); 5},            // MOV L,D
+            0x7A => {self.mov(Register::A, Register::D); 5},            // MOV A,D
+            
+            0x4B => {self.mov(Register::C, Register::E); 5},            // MOV C,E
+            0x5B => 5,                                                  // MOV E,E
+            0x6B => {self.mov(Register::L, Register::E); 5},            // MOV L,E
+            0x7B => {self.mov(Register::A, Register::E); 5},            // MOV A,E
+            
+            0x4C => {self.mov(Register::C, Register::H); 5},            // MOV C,H
+            0x5C => {self.mov(Register::E, Register::H); 5},            // MOV E,H
+            0x6C => {self.mov(Register::L, Register::H); 5},            // MOV L,H
+            0x7C => {self.mov(Register::A, Register::H); 5},            // MOV A,H
+            
+            0x4D => {self.mov(Register::C, Register::L); 5},            // MOV C,L
+            0x5D => {self.mov(Register::E, Register::L); 5},            // MOV E,L
+            0x6D => 5,                                                  // MOV L,L
+            0x7D => {self.mov(Register::A, Register::L); 5},            // MOV A,L
+                                                                        
+            0x4E => {self.mov_m(Register::C); 7},                       // MOV C,M
+            0x5E => {self.mov_m(Register::E); 7},                       // MOV E,M
+            0x6E => {self.mov_m(Register::L); 7},                       // MOV L,M
+            0x7E => {self.mov_m(Register::A); 7},                       // MOV A,M
+                                                                        
+            0x4F => {self.mov(Register::C, Register::A); 5},            // MOV C,A
+            0x5F => {self.mov(Register::E, Register::A); 5},            // MOV E,A
+            0x6F => {self.mov(Register::L, Register::A); 5},            // MOV L,A
+            0x7F => 5,                                                  // MOV A,A
             _ => {eprintln!("Invalid opcode: {opcode}"); 0}
         };
 
@@ -276,6 +355,17 @@ impl I8080 {
         let location = self.get_register_pair(RegisterPair::H);
         self.a = self.read_u8(location);
     }
+
+    fn mov(&mut self, dst: Register, src: Register) {
+        let value = self.get_register(src);
+        self.set_register(dst, value);
+    }
+
+    fn mov_m(&mut self, register: Register) {
+        let location = self.get_register_pair(RegisterPair::H);
+        let value = self.get_register(register);
+        self.write_u8(location, value);
+    }
 }
 
 #[cfg(test)]
@@ -454,6 +544,21 @@ mod tests {
             i8080.write_u8(0x300, 0xFE);
             i8080.set_register_pair(RegisterPair::H, 0x300);
             i8080.lda();
+            assert_eq!(i8080.get_register(Register::A), i8080.read_u8(0x300));
+        }
+        #[test]
+        fn mov() {
+            let mut i8080 = i8080!();
+            i8080.set_register(Register::A, 0x13);
+            i8080.mov(Register::D, Register::A);
+            assert_eq!(i8080.get_register(Register::D), i8080.get_register(Register::A));
+        }
+        #[test]
+        fn mov_m() {
+            let mut i8080 = i8080!();
+            i8080.set_register(Register::A, 0x13);
+            i8080.set_register_pair(RegisterPair::H, 0x0300);
+            i8080.mov_m(Register::A);
             assert_eq!(i8080.get_register(Register::A), i8080.read_u8(0x300));
         }
     }
