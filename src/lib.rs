@@ -195,6 +195,16 @@ impl I8080 {
             0x1C => {self.inr(Register::E); 5},                         // INR E
             0x2C => {self.inr(Register::L); 5},                         // INR L
             0x3C => {self.inr(Register::A); 5},                         // INR A
+
+            0x05 => {self.dcr(Register::B); 5},                         // DCR B
+            0x15 => {self.dcr(Register::D); 5},                         // DCR D
+            0x25 => {self.dcr(Register::H); 5},                         // DCR H
+            0x35 => {self.dcr_m(); 10},                                 // DCR M
+
+            0x0D => {self.dcr(Register::C); 5},                         // DCR C
+            0x1D => {self.dcr(Register::E); 5},                         // DCR E
+            0x2D => {self.dcr(Register::L); 5},                         // DCR L
+            0x3D => {self.dcr(Register::A); 5},                         // DCR A
             _ => {eprintln!("Invalid opcode: {opcode}"); 0}
         };
 
@@ -423,6 +433,19 @@ impl I8080 {
         self.set_flags_without_carry(value);
         self.write_u8(location, value);
     }
+ 
+    fn dcr(&mut self, register: Register) {
+        let value = self.get_register(register) - 1;
+        self.set_flags_without_carry(value);
+        self.set_register(register, value);
+    }
+ 
+    fn dcr_m(&mut self) {
+        let location = self.get_register_pair(RegisterPair::H);
+        let value = self.read_u8(location) - 1;
+        self.set_flags_without_carry(value);
+        self.write_u8(location, value);
+    }
 }
 
 #[cfg(test)]
@@ -633,6 +656,17 @@ mod tests {
             assert_eq!(i8080.get_flag(Flag::Z), false);
             assert_eq!(i8080.get_flag(Flag::A), true);
             assert_eq!(i8080.get_flag(Flag::P), true);
+        }
+        #[test]
+        fn dcr() {
+            let mut i8080 = i8080!();
+            i8080.set_register(Register::A, 0b10000000);
+            i8080.dcr(Register::A);
+            assert_eq!(i8080.get_register(Register::A), 0b01111111); 
+            assert_eq!(i8080.get_flag(Flag::S), false);
+            assert_eq!(i8080.get_flag(Flag::Z), false);
+            assert_eq!(i8080.get_flag(Flag::A), true);
+            assert_eq!(i8080.get_flag(Flag::P), false);
         }
     }
 }
