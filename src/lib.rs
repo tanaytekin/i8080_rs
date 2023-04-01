@@ -1,3 +1,14 @@
+enum Flag {
+    C = 0,
+    P = 2,
+    A = 4,
+    Z = 6,
+    S = 7,
+}
+
+const CONSTANT_FLAGS: u8 = 0b00101010;
+
+#[derive(Clone, Copy)]
 enum Register {
     A,
     F,
@@ -174,6 +185,16 @@ impl I8080 {
             0x5F => {self.mov(Register::E, Register::A); 5},            // MOV E,A
             0x6F => {self.mov(Register::L, Register::A); 5},            // MOV L,A
             0x7F => 5,                                                  // MOV A,A
+ 
+            0x04 => {self.inr(Register::B); 5},                         // INR B
+            0x14 => {self.inr(Register::D); 5},                         // INR D
+            0x24 => {self.inr(Register::H); 5},                         // INR H
+            0x34 => {self.inr_m(); 10},                                 // INR M
+ 
+            0x0C => {self.inr(Register::C); 5},                         // INR C
+            0x1C => {self.inr(Register::E); 5},                         // INR E
+            0x2C => {self.inr(Register::L); 5},                         // INR L
+            0x3C => {self.inr(Register::A); 5},                         // INR A
             _ => {eprintln!("Invalid opcode: {opcode}"); 0}
         };
 
@@ -274,6 +295,29 @@ impl I8080 {
         ((*high as u16) << 8) | (*low as u16)
     }
 
+    fn get_flag(&self, flag: Flag) -> bool {
+        ((self.flags >> (flag as u8)) & 0x1) != 0
+    }
+ 
+    fn parity(value: u8) -> bool {
+        let mut value = value;
+        let mut sum = 0;
+        while value > 0 {
+            sum += value & 0x1;
+            value >>= 1;
+        }
+        sum % 2 == 0
+    }
+    #[allow(arithmetic_overflow)]
+    fn set_flags_without_carry(&mut self, value: u8) {
+        let flags = ((Self::parity(value) as u8) << Flag::P as u8) |
+                    (((value > 0xF) as u8) << Flag::A as u8) |
+                    (((value == 0) as u8) << Flag::Z as u8) |
+                    ((((value & 0x80) > 0) as u8) << Flag::S as u8);
+        let mask = !(CONSTANT_FLAGS | (1 << Flag::C as u8));
+        self.flags = (self.flags & !mask) | (flags & mask);
+    }
+
     fn lxi(&mut self, pair: RegisterPair) {
         let value = self.next_u16();
         self.set_register_pair(pair, value);
@@ -366,6 +410,19 @@ impl I8080 {
         let value = self.get_register(register);
         self.write_u8(location, value);
     }
+
+    fn inr(&mut self, register: Register) {
+        let value = self.get_register(register) + 1;
+        self.set_flags_without_carry(value);
+        self.set_register(register, value);
+    }
+ 
+    fn inr_m(&mut self) {
+        let location = self.get_register_pair(RegisterPair::H);
+        let value = self.read_u8(location) + 1;
+        self.set_flags_without_carry(value);
+        self.write_u8(location, value);
+    }
 }
 
 #[cfg(test)]
@@ -408,6 +465,11 @@ mod tests {
             i8080.set_register_pair(RegisterPair::H, 0x1234);
             assert_eq!(i8080.h, 0x12);
             assert_eq!(i8080.l, 0x34);
+        }
+        #[test]
+        fn parity() {
+            assert_eq!(I8080::parity(26), false);
+            assert_eq!(I8080::parity(10), true);
         }
     }
 
@@ -560,6 +622,17 @@ mod tests {
             i8080.set_register_pair(RegisterPair::H, 0x0300);
             i8080.mov_m(Register::A);
             assert_eq!(i8080.get_register(Register::A), i8080.read_u8(0x300));
+        }
+        #[test]
+        fn inr() {
+            let mut i8080 = i8080!();
+            i8080.set_register(Register::A, 0b10100010);
+            i8080.inr(Register::A);
+            assert_eq!(i8080.get_register(Register::A), 0b10100011); 
+            assert_eq!(i8080.get_flag(Flag::S), true);
+            assert_eq!(i8080.get_flag(Flag::Z), false);
+            assert_eq!(i8080.get_flag(Flag::A), true);
+            assert_eq!(i8080.get_flag(Flag::P), true);
         }
     }
 }
