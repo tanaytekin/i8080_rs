@@ -207,6 +207,7 @@ impl I8080 {
             0x3D => {self.dcr(Register::A); 5},                         // DCR A
 
             0x07 => {self.rlc(); 4},                                    // RLC
+            0x17 => {self.ral(); 4},                                    // RLC
             _ => {eprintln!("Invalid opcode: {opcode}"); 0}
         };
 
@@ -305,6 +306,10 @@ impl I8080 {
     fn get_register_pair(&mut self, pair: RegisterPair) -> u16 {
         let (high, low) = self.register_pair_to_refs(pair);
         ((*high as u16) << 8) | (*low as u16)
+    }
+
+    fn get_carry(&self) -> u8 {
+        self.flags & 0x1
     }
 
     fn set_carry(&mut self, value: u8) {
@@ -457,6 +462,13 @@ impl I8080 {
         let carry = (self.a & 0x80) >> 7;
         self.a <<= 1;
         self.a = (!1 & self.a) | carry;
+        self.set_carry(carry);
+    }
+
+    fn ral(&mut self) {
+        let carry = (self.a & 0x80) >> 7;
+        self.a <<= 1;
+        self.a = (!1 & self.a) | self.get_carry();
         self.set_carry(carry);
     }
 }
@@ -692,6 +704,18 @@ mod tests {
             i8080.set_register(Register::A, 0b01100111);
             i8080.rlc();
             assert_eq!(i8080.a, 0b11001110);
+            assert_eq!(i8080.get_flag(Flag::C), false);
+        }
+
+        #[test]
+        fn ral() {
+            let mut i8080 = i8080!();
+            i8080.set_register(Register::A, 0b10110101);
+            i8080.ral();
+            assert_eq!(i8080.a, 0b01101010);
+            assert_eq!(i8080.get_flag(Flag::C), true);
+            i8080.ral();
+            assert_eq!(i8080.a, 0b11010101);
             assert_eq!(i8080.get_flag(Flag::C), false);
         }
     }
