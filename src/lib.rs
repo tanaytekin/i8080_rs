@@ -207,7 +207,7 @@ impl I8080 {
             0x3D => {self.dcr(Register::A); 5},                         // DCR A
 
             0x07 => {self.rlc(); 4},                                    // RLC
-            0x17 => {self.ral(); 4},                                    // RLC
+            0x17 => {self.ral(); 4},                                    // RAL
             _ => {eprintln!("Invalid opcode: {opcode}"); 0}
         };
 
