@@ -471,6 +471,13 @@ impl I8080 {
         self.a = (!1 & self.a) | self.get_carry();
         self.set_carry(carry);
     }
+
+    fn rrc(&mut self) {
+        let carry = self.a & 0x1;
+        self.a >>= 1;
+        self.a = (!0x80 & self.a) | (carry << 7);
+        self.set_carry(carry);
+    }
 }
 
 #[cfg(test)]
@@ -717,6 +724,17 @@ mod tests {
             i8080.ral();
             assert_eq!(i8080.a, 0b11010101);
             assert_eq!(i8080.get_flag(Flag::C), false);
+        }
+        #[test]
+        fn rrc() {
+            let mut i8080 = i8080!();
+            i8080.set_register(Register::A, 0b11110010);
+            i8080.rrc();
+            assert_eq!(i8080.a, 0b01111001);
+            assert_eq!(i8080.get_flag(Flag::C), false);
+            i8080.rrc();
+            assert_eq!(i8080.a, 0b10111100);
+            assert_eq!(i8080.get_flag(Flag::C), true);
         }
     }
 }
