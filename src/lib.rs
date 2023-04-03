@@ -211,6 +211,7 @@ impl I8080 {
             0x0F => {self.rrc(); 4},                                    // RRC
             0x1F => {self.rar(); 4},                                    // RAR
             0x37 => {self.stc(); 4},                                    // STC
+            0x3F => {self.cmc(); 4},                                    // CMC
             _ => {eprintln!("Invalid opcode: {opcode}"); 0}
         };
 
@@ -492,6 +493,10 @@ impl I8080 {
     fn stc(&mut self) {
         self.set_carry(1);
     }
+
+    fn cmc(&mut self) {
+        self.set_carry(!self.get_carry())
+    }
 }
 
 #[cfg(test)]
@@ -767,6 +772,13 @@ mod tests {
             let mut i8080 = i8080!();
             i8080.stc();
             assert_eq!(i8080.get_flag(Flag::C), true);
+        }
+        #[test]
+        fn cmc() {
+            let mut i8080 = i8080!();
+            i8080.flags = 0b11000110;
+            i8080.stc();
+            assert_eq!(i8080.flags, 0b11000111);
         }
     }
 }
