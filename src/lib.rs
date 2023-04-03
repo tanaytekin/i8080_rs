@@ -208,6 +208,8 @@ impl I8080 {
 
             0x07 => {self.rlc(); 4},                                    // RLC
             0x17 => {self.ral(); 4},                                    // RAL
+            0x0F => {self.rrc(); 4},                                    // RRC
+            0x1F => {self.rar(); 4},                                    // RAR
             _ => {eprintln!("Invalid opcode: {opcode}"); 0}
         };
 
@@ -478,6 +480,13 @@ impl I8080 {
         self.a = (!0x80 & self.a) | (carry << 7);
         self.set_carry(carry);
     }
+
+    fn rar(&mut self) {
+        let carry = self.a & 0x1;
+        self.a >>= 1;
+        self.a = (!0x80 & self.a) | (self.get_carry() << 7);
+        self.set_carry(carry);
+    }
 }
 
 #[cfg(test)]
@@ -734,6 +743,18 @@ mod tests {
             assert_eq!(i8080.get_flag(Flag::C), false);
             i8080.rrc();
             assert_eq!(i8080.a, 0b10111100);
+            assert_eq!(i8080.get_flag(Flag::C), true);
+        }
+        #[test]
+        fn rar() {
+            let mut i8080 = i8080!();
+            i8080.set_register(Register::A, 0b01101010);
+            i8080.set_carry(1);
+            i8080.rar();
+            assert_eq!(i8080.a, 0b10110101);
+            assert_eq!(i8080.get_flag(Flag::C), false);
+            i8080.rar();
+            assert_eq!(i8080.a, 0b01011010);
             assert_eq!(i8080.get_flag(Flag::C), true);
         }
     }
