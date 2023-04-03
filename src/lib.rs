@@ -238,6 +238,10 @@ impl I8080 {
         ((self.memory[(location + 1) as usize] as u16) << 8) | self.memory[location as usize] as u16
     }
 
+    fn read_m(&self) -> u8 {
+        self.memory[self.get_register_pair(RegisterPair::H) as usize]
+    }
+
     fn write_u8(&mut self, location: u16, value: u8) {
         self.memory[location as usize] = value;
     }
@@ -246,6 +250,10 @@ impl I8080 {
         let value = value.to_le_bytes();
         self.memory[location as usize] = value[0];
         self.memory[(location + 1) as usize] = value[1];
+    }
+
+    fn write_m(&mut self, value: u8) {
+        self.memory[self.get_register_pair(RegisterPair::H) as usize] = value;
     }
 
     fn next_u8(&mut self) -> u8 {
@@ -319,7 +327,7 @@ impl I8080 {
         *high = value[1];
     }
 
-    fn get_register_pair(&mut self, pair: RegisterPair) -> u16 {
+    fn get_register_pair(&self, pair: RegisterPair) -> u16 {
         let (high, low) = self.register_pair_to_refs(pair);
         ((*high as u16) << 8) | (*low as u16)
     }
@@ -432,9 +440,8 @@ impl I8080 {
     }
  
     fn mvi_m(&mut self) {
-        let location = self.get_register_pair(RegisterPair::H);
         let value = self.next_u8();
-        self.write_u8(location , value);
+        self.write_m(value);
     }
 
     fn sta(&mut self) {
@@ -453,9 +460,8 @@ impl I8080 {
     }
 
     fn mov_m(&mut self, register: Register) {
-        let location = self.get_register_pair(RegisterPair::H);
         let value = self.get_register(register);
-        self.write_u8(location, value);
+        self.write_m(value);
     }
 
     fn inr(&mut self, register: Register) {
@@ -465,10 +471,9 @@ impl I8080 {
     }
  
     fn inr_m(&mut self) {
-        let location = self.get_register_pair(RegisterPair::H);
-        let value = self.read_u8(location) + 1;
+        let value = self.read_m() + 1;
         self.set_flags_without_carry(value);
-        self.write_u8(location, value);
+        self.write_m(value);
     }
  
     fn dcr(&mut self, register: Register) {
@@ -478,10 +483,9 @@ impl I8080 {
     }
  
     fn dcr_m(&mut self) {
-        let location = self.get_register_pair(RegisterPair::H);
-        let value = self.read_u8(location) - 1;
+        let value = self.read_m() - 1;
         self.set_flags_without_carry(value);
-        self.write_u8(location, value);
+        self.write_m(value);
     }
 
     fn rlc(&mut self) {
@@ -723,6 +727,14 @@ mod tests {
             assert_eq!(i8080.read_u8(0x0234), 0xCC);
         }
         #[test]
+        fn mvi_m() {
+            let mut i8080 = i8080![0xCC];
+            let location = 0x0234;
+            i8080.set_register_pair(RegisterPair::H, location);
+            i8080.mvi_m();
+            assert_eq!(i8080.read_u8(location), 0xCC);
+        }
+        #[test]
         fn sta() {
             let mut i8080 = i8080!();
             i8080.set_register_pair(RegisterPair::H, 0x0234);
@@ -765,6 +777,19 @@ mod tests {
             assert_eq!(i8080.get_flag(Flag::P), true);
         }
         #[test]
+        fn inr_m() {
+            let mut i8080 = i8080!();
+            let location = 0x300;
+            i8080.write_u8(location, 0b10100010);
+            i8080.set_register_pair(RegisterPair::H, location);
+            i8080.inr_m();
+            assert_eq!(i8080.read_u8(location), 0b10100011);
+            assert_eq!(i8080.get_flag(Flag::S), true);
+            assert_eq!(i8080.get_flag(Flag::Z), false);
+            assert_eq!(i8080.get_flag(Flag::A), true);
+            assert_eq!(i8080.get_flag(Flag::P), true);
+        }
+        #[test]
         fn dcr() {
             let mut i8080 = i8080!();
             i8080.set_register(Register::A, 0b10000000);
@@ -775,7 +800,19 @@ mod tests {
             assert_eq!(i8080.get_flag(Flag::A), true);
             assert_eq!(i8080.get_flag(Flag::P), false);
         }
-
+        #[test]
+        fn dcr_m() {
+            let mut i8080 = i8080!();
+            let location = 0x300;
+            i8080.write_u8(location, 0b10000000);
+            i8080.set_register_pair(RegisterPair::H, location);
+            i8080.dcr_m();
+            assert_eq!(i8080.read_u8(location), 0b01111111);
+            assert_eq!(i8080.get_flag(Flag::S), false);
+            assert_eq!(i8080.get_flag(Flag::Z), false);
+            assert_eq!(i8080.get_flag(Flag::A), true);
+            assert_eq!(i8080.get_flag(Flag::P), false);
+        }
         #[test]
         fn rlc() {
             let mut i8080 = i8080!();
