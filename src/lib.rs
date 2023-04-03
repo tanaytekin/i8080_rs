@@ -213,6 +213,8 @@ impl I8080 {
             0x37 => {self.stc(); 4},                                    // STC
             0x3F => {self.cmc(); 4},                                    // CMC
             0x2F => {self.cma(); 4},                                    // CMA
+
+            0x27 => {self.daa(); 4},                                    // DAA
             _ => {eprintln!("Invalid opcode: {opcode}"); 0}
         };
 
@@ -333,6 +335,16 @@ impl I8080 {
             value >>= 1;
         }
         sum % 2 == 0
+    }
+    #[allow(arithmetic_overflow)]
+    fn set_flags(&mut self, value: u16) {
+        let flags = ((Self::parity((value & 0xFF) as u8) as u8) << Flag::P as u8) |
+                    (((value > 0xF) as u8) << Flag::A as u8) |
+                    (((value == 0) as u8) << Flag::Z as u8) |
+                    ((((value & 0x80) > 0) as u8) << Flag::S as u8) |
+                    (((value > 0xFF) as u8) << Flag::C as u8);
+        let mask = !CONSTANT_FLAGS;
+        self.flags = (self.flags & !mask) | (flags & mask);
     }
     #[allow(arithmetic_overflow)]
     fn set_flags_without_carry(&mut self, value: u8) {
@@ -501,6 +513,23 @@ impl I8080 {
 
     fn cma(&mut self) {
         self.a = !self.a
+    }
+
+    fn daa(&mut self) {
+        let low = (self.a as u16) & 0xF;
+        let mut a = self.a as u16;
+        if low > 9 || self.get_flag(Flag::A) {
+            a += 6;
+            self.set_flags(a);
+            self.a = (a & 0xFF) as u8;
+        }
+        let high = ((self.a as u16) & 0xF0) >> 4;
+        a = self.a as u16;
+        if high > 9 || self.get_flag(Flag::C) {
+            a += 0x60;
+            self.set_flags(a);
+            self.a = (a & 0xFF) as u8;
+        }
     }
 }
 
@@ -791,6 +820,15 @@ mod tests {
             i8080.a = 0b01010001;
             i8080.cma();
             assert_eq!(i8080.a, 0b10101110);
+        }
+        #[test]
+        fn daa() {
+            let mut i8080 = i8080!();
+            i8080.a = 0b10011011;
+            i8080.daa();
+            assert_eq!(i8080.a, 1);
+            assert_eq!(i8080.get_flag(Flag::A), true);
+            assert_eq!(i8080.get_flag(Flag::C), true);
         }
     }
 }
