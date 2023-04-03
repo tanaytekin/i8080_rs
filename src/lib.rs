@@ -210,6 +210,7 @@ impl I8080 {
             0x17 => {self.ral(); 4},                                    // RAL
             0x0F => {self.rrc(); 4},                                    // RRC
             0x1F => {self.rar(); 4},                                    // RAR
+            0x37 => {self.stc(); 4},                                    // STC
             _ => {eprintln!("Invalid opcode: {opcode}"); 0}
         };
 
@@ -487,6 +488,10 @@ impl I8080 {
         self.a = (!0x80 & self.a) | (self.get_carry() << 7);
         self.set_carry(carry);
     }
+
+    fn stc(&mut self) {
+        self.set_carry(1);
+    }
 }
 
 #[cfg(test)]
@@ -755,6 +760,12 @@ mod tests {
             assert_eq!(i8080.get_flag(Flag::C), false);
             i8080.rar();
             assert_eq!(i8080.a, 0b01011010);
+            assert_eq!(i8080.get_flag(Flag::C), true);
+        }
+        #[test]
+        fn stc() {
+            let mut i8080 = i8080!();
+            i8080.stc();
             assert_eq!(i8080.get_flag(Flag::C), true);
         }
     }
