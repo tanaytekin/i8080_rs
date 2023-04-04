@@ -224,6 +224,15 @@ impl I8080 {
             0x85 => {self.add(Register::L); 4},                         // ADD L
             0x86 => {self.add_m(); 7},                                  // ADD M
             0x87 => {self.add(Register::A); 4},                         // ADD A
+
+            0x88 => {self.adc(Register::B); 4},                         // ADC B
+            0x89 => {self.adc(Register::C); 4},                         // ADC C
+            0x8A => {self.adc(Register::D); 4},                         // ADC D
+            0x8B => {self.adc(Register::E); 4},                         // ADC E
+            0x8C => {self.adc(Register::H); 4},                         // ADC H
+            0x8D => {self.adc(Register::L); 4},                         // ADC L
+            0x8E => {self.adc_m(); 7},                                  // ADC M
+            0x8F => {self.adc(Register::A); 4},                         // ADC A
             _ => {eprintln!("Invalid opcode: {opcode}"); 0}
         };
 
@@ -552,8 +561,19 @@ impl I8080 {
     }
  
     fn add_m(&mut self) {
-        let location = self.get_register_pair(RegisterPair::H);
-        let a = (self.a as u16) + (self.read_u8(location) as u16);
+        let a = (self.a as u16) + (self.read_m() as u16);
+        self.set_flags(a);
+        self.a = (a & 0xFF) as u8;
+    }
+
+    fn adc(&mut self, register: Register) {
+        let a = (self.a as u16) + (self.get_register(register) as u16) + (self.get_carry() as u16);
+        self.set_flags(a);
+        self.a = (a & 0xFF) as u8;
+    }
+ 
+    fn adc_m(&mut self) {
+        let a = (self.a as u16) + (self.read_m() as u16) + (self.get_carry() as u16);
         self.set_flags(a);
         self.a = (a & 0xFF) as u8;
     }
@@ -914,6 +934,36 @@ mod tests {
             assert_eq!(i8080.get_flag(Flag::Z), false);
             assert_eq!(i8080.get_flag(Flag::C), false);
             assert_eq!(i8080.get_flag(Flag::P), true);
+            assert_eq!(i8080.get_flag(Flag::S), true);
+            assert_eq!(i8080.get_flag(Flag::A), true);
+        }
+        #[test]
+        fn adc() {
+            let mut i8080 = i8080!();
+            i8080.set_carry(1);
+            i8080.c = 0x3D;
+            i8080.a = 0x42;
+            i8080.adc(Register::C);
+            assert_eq!(i8080.a, 0x80);
+            assert_eq!(i8080.get_flag(Flag::Z), false);
+            assert_eq!(i8080.get_flag(Flag::C), false);
+            assert_eq!(i8080.get_flag(Flag::P), false);
+            assert_eq!(i8080.get_flag(Flag::S), true);
+            assert_eq!(i8080.get_flag(Flag::A), true);
+        }
+        #[test]
+        fn adc_m() {
+            let mut i8080 = i8080!();
+            let location = 0x300;
+            i8080.write_u8(location, 0x3D);
+            i8080.set_register_pair(RegisterPair::H, 0x0300);
+            i8080.set_carry(1);
+            i8080.a = 0x42;
+            i8080.adc_m();
+            assert_eq!(i8080.a, 0x80);
+            assert_eq!(i8080.get_flag(Flag::Z), false);
+            assert_eq!(i8080.get_flag(Flag::C), false);
+            assert_eq!(i8080.get_flag(Flag::P), false);
             assert_eq!(i8080.get_flag(Flag::S), true);
             assert_eq!(i8080.get_flag(Flag::A), true);
         }
