@@ -242,6 +242,15 @@ impl I8080 {
             0x95 => {self.sub(Register::L); 4},                         // SUB L
             0x96 => {self.sub_m(); 7},                                  // SUB M
             0x97 => {self.sub(Register::A); 4},                         // SUB A
+
+            0x98 => {self.sbb(Register::B); 4},                         // SBB B
+            0x99 => {self.sbb(Register::C); 4},                         // SBB C
+            0x9A => {self.sbb(Register::D); 4},                         // SBB D
+            0x9B => {self.sbb(Register::E); 4},                         // SBB E
+            0x9C => {self.sbb(Register::H); 4},                         // SBB H
+            0x9D => {self.sbb(Register::L); 4},                         // SBB L
+            0x9E => {self.sbb_m(); 7},                                  // SBB M
+            0x9F => {self.sbb(Register::A); 4},                         // SBB A
             _ => {eprintln!("Invalid opcode: {opcode}"); 0}
         };
 
@@ -595,6 +604,18 @@ impl I8080 {
  
     fn sub_m(&mut self) {
         let a = (self.a as u16) - (self.read_m() as u16);
+        self.set_flags(a);
+        self.a = (a & 0xFF) as u8;
+    }
+
+    fn sbb(&mut self, register: Register) {
+        let a = (self.a as u16) - (self.get_register(register) as u16) - (self.get_carry() as u16);
+        self.set_flags(a);
+        self.a = (a & 0xFF) as u8;
+    }
+ 
+    fn sbb_m(&mut self) {
+        let a = (self.a as u16) - (self.read_m() as u16) - (self.get_carry() as u16);
         self.set_flags(a);
         self.a = (a & 0xFF) as u8;
     }
@@ -1013,6 +1034,33 @@ mod tests {
             assert_eq!(i8080.get_flag(Flag::P), true);
             assert_eq!(i8080.get_flag(Flag::S), false);
         }
-
+        #[test]
+        fn sbb() {
+            let mut i8080 = i8080!();
+            i8080.set_carry(1);
+            i8080.l = 0x02;
+            i8080.a = 0x04;
+            i8080.sbb(Register::L);
+            assert_eq!(i8080.a, 0x01);
+            assert_eq!(i8080.get_flag(Flag::Z), false);
+            assert_eq!(i8080.get_flag(Flag::C), false);
+            assert_eq!(i8080.get_flag(Flag::P), false);
+            assert_eq!(i8080.get_flag(Flag::S), false);
+        }  
+        #[test]
+        fn sbb_m() {
+            let mut i8080 = i8080!();
+            let location = 0x300;
+            i8080.write_u8(location, 0x02);
+            i8080.set_register_pair(RegisterPair::H, 0x0300);
+            i8080.set_carry(1);
+            i8080.a = 0x04;
+            i8080.sbb_m();
+            assert_eq!(i8080.a, 0x01);
+            assert_eq!(i8080.get_flag(Flag::Z), false);
+            assert_eq!(i8080.get_flag(Flag::C), false);
+            assert_eq!(i8080.get_flag(Flag::P), false);
+            assert_eq!(i8080.get_flag(Flag::S), false);
+        }
     }
 }
