@@ -278,6 +278,15 @@ impl I8080 {
             0xB5 => {self.ora(Register::L); 4},                         // ORA L
             0xB6 => {self.ora_m(); 7},                                  // ORA M
             0xB7 => {self.ora(Register::A); 4},                         // ORA A
+
+            0xB8 => {self.cmp(Register::B); 4},                         // CMP B
+            0xB9 => {self.cmp(Register::C); 4},                         // CMP C
+            0xBA => {self.cmp(Register::D); 4},                         // CMP D
+            0xBB => {self.cmp(Register::E); 4},                         // CMP E
+            0xBC => {self.cmp(Register::H); 4},                         // CMP H
+            0xBD => {self.cmp(Register::L); 4},                         // CMP L
+            0xBE => {self.cmp_m(); 7},                                  // CMP M
+            0xBF => {self.cmp(Register::A); 4},                         // CMP A
             _ => {eprintln!("Invalid opcode: {opcode}"); 0}
         };
 
@@ -675,6 +684,16 @@ impl I8080 {
     fn ora_m(&mut self) {
         self.a |= self.read_m();
         self.set_flags(self.a as u16);
+    }
+
+    fn cmp(&mut self, register: Register) {
+        let a = (self.a as u16) - (self.get_register(register) as u16);
+        self.set_flags(a);
+    }
+ 
+    fn cmp_m(&mut self) {
+        let a = (self.a as u16) - (self.read_m() as u16);
+        self.set_flags(a);
     }
 }
 
@@ -1197,6 +1216,53 @@ mod tests {
             assert_eq!(i8080.get_flag(Flag::P), true);
             assert_eq!(i8080.get_flag(Flag::S), false);
         }
+        #[test]
+        fn cmp() {
+            let mut i8080 = i8080!();
+            i8080.a = 0x0A;
+            i8080.e = 0x05;
+            i8080.cmp(Register::E);
+            assert_eq!(i8080.a, 0x0A);
+            assert_eq!(i8080.e, 0x05);
+            assert_eq!(i8080.get_flag(Flag::Z), false);
+            assert_eq!(i8080.get_flag(Flag::C), false);
+            assert_eq!(i8080.get_flag(Flag::P), true);
+            assert_eq!(i8080.get_flag(Flag::S), false);
 
+            i8080.a = 0x02;
+            i8080.e = 0x05;
+            i8080.cmp(Register::E);
+            assert_eq!(i8080.a, 0x02);
+            assert_eq!(i8080.e, 0x05);
+            assert_eq!(i8080.get_flag(Flag::Z), false);
+            assert_eq!(i8080.get_flag(Flag::C), true);
+            assert_eq!(i8080.get_flag(Flag::P), false);
+            assert_eq!(i8080.get_flag(Flag::S), true);
+
+            i8080.a = 0b11100101;
+            i8080.e = 0x05;
+            i8080.cmp(Register::E);
+            assert_eq!(i8080.a, 0b11100101);
+            assert_eq!(i8080.e, 0x05);
+            assert_eq!(i8080.get_flag(Flag::Z), false);
+            assert_eq!(i8080.get_flag(Flag::C), false);
+            assert_eq!(i8080.get_flag(Flag::P), false);
+            assert_eq!(i8080.get_flag(Flag::S), true);
+        }
+        #[test]
+        fn cmp_m() {
+            let mut i8080 = i8080!();
+            let location = 0x300;
+            i8080.write_u8(location, 0x05);
+            i8080.set_register_pair(RegisterPair::H, location);
+            i8080.a = 0x02;
+            i8080.cmp_m();
+            assert_eq!(i8080.read_u8(location), 0x05);
+            assert_eq!(i8080.a, 0x02);
+            assert_eq!(i8080.get_flag(Flag::Z), false);
+            assert_eq!(i8080.get_flag(Flag::C), true);
+            assert_eq!(i8080.get_flag(Flag::P), false);
+            assert_eq!(i8080.get_flag(Flag::S), true);
+        }
     }
 }
