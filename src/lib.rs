@@ -302,6 +302,11 @@ impl I8080 {
             0x13 => {self.inx(RegisterPair::D); 5},                     // INX D
             0x23 => {self.inx(RegisterPair::H); 5},                     // INX H
             0x33 => {self.inx_sp(); 5},                                 // INX SP
+
+            0x0B => {self.dcx(RegisterPair::B); 5},                     // DCX B
+            0x1B => {self.dcx(RegisterPair::D); 5},                     // DCX D
+            0x2B => {self.dcx(RegisterPair::H); 5},                     // DCX H
+            0x3B => {self.dcx_sp(); 5},                                 // DCX SP
             _ => {eprintln!("Invalid opcode: {opcode}"); 0}
         };
 
@@ -761,6 +766,14 @@ impl I8080 {
 
     fn inx_sp(&mut self) {
         self.sp += 1;
+    }
+
+    fn dcx(&mut self, pair: RegisterPair) {
+        self.set_register_pair(pair, self.get_register_pair(pair) - 1);
+    }
+
+    fn dcx_sp(&mut self) {
+        self.sp -= 1;
     }
 }
 
@@ -1436,6 +1449,22 @@ mod tests {
             i8080.sp = 0xFFFF;
             i8080.inx_sp();
             assert_eq!(i8080.sp, 0);
+        }
+        #[test]
+        fn dcx() {
+            let mut i8080 = i8080!();
+            i8080.h = 0x98;
+            i8080.l = 0x00;
+            i8080.dcx(RegisterPair::H);
+            assert_eq!(i8080.h, 0x97);
+            assert_eq!(i8080.l, 0xFF);
+        }
+        #[test]
+        fn dcx_sp() {
+            let mut i8080 = i8080!();
+            i8080.sp = 0xFFFF;
+            i8080.dcx_sp();
+            assert_eq!(i8080.sp, 0xFFFE);
         }
     }
 }
