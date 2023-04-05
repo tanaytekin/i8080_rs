@@ -260,6 +260,15 @@ impl I8080 {
             0xA5 => {self.ana(Register::L); 4},                         // ANA L
             0xA6 => {self.ana_m(); 7},                                  // ANA M
             0xA7 => {self.ana(Register::A); 4},                         // ANA A
+
+            0xA8 => {self.xra(Register::B); 4},                         // XRA B
+            0xA9 => {self.xra(Register::C); 4},                         // XRA C
+            0xAA => {self.xra(Register::D); 4},                         // XRA D
+            0xAB => {self.xra(Register::E); 4},                         // XRA E
+            0xAC => {self.xra(Register::H); 4},                         // XRA H
+            0xAD => {self.xra(Register::L); 4},                         // XRA L
+            0xAE => {self.xra_m(); 7},                                  // XRA M
+            0xAF => {self.xra(Register::A); 4},                         // XRA A
             _ => {eprintln!("Invalid opcode: {opcode}"); 0}
         };
 
@@ -638,6 +647,16 @@ impl I8080 {
         self.a &= self.read_m();
         self.set_flags(self.a as u16);
     }
+ 
+    fn xra(&mut self, register: Register) {
+        self.a ^= self.get_register(register);
+        self.set_flags(self.a as u16);
+    }
+ 
+    fn xra_m(&mut self) {
+        self.a ^= self.read_m();
+        self.set_flags(self.a as u16);
+    }
 }
 
 #[cfg(test)]
@@ -988,7 +1007,7 @@ mod tests {
             let mut i8080 = i8080!();
             let location = 0x300;
             i8080.write_u8(location, 0x2E);
-            i8080.set_register_pair(RegisterPair::H, 0x0300);
+            i8080.set_register_pair(RegisterPair::H, location);
             i8080.a = 0x6C;
             i8080.add_m();
             assert_eq!(i8080.a, 0x9A);
@@ -1017,7 +1036,7 @@ mod tests {
             let mut i8080 = i8080!();
             let location = 0x300;
             i8080.write_u8(location, 0x3D);
-            i8080.set_register_pair(RegisterPair::H, 0x0300);
+            i8080.set_register_pair(RegisterPair::H, location);
             i8080.set_carry(1);
             i8080.a = 0x42;
             i8080.adc_m();
@@ -1044,7 +1063,7 @@ mod tests {
             let mut i8080 = i8080!();
             let location = 0x300;
             i8080.write_u8(location, 0x3E);
-            i8080.set_register_pair(RegisterPair::H, 0x0300);
+            i8080.set_register_pair(RegisterPair::H, location);
             i8080.a = 0x3E;
             i8080.sub_m();
             assert_eq!(i8080.a, 0x0);
@@ -1071,7 +1090,7 @@ mod tests {
             let mut i8080 = i8080!();
             let location = 0x300;
             i8080.write_u8(location, 0x02);
-            i8080.set_register_pair(RegisterPair::H, 0x0300);
+            i8080.set_register_pair(RegisterPair::H, location);
             i8080.set_carry(1);
             i8080.a = 0x04;
             i8080.sbb_m();
@@ -1098,13 +1117,39 @@ mod tests {
             let mut i8080 = i8080!();
             let location = 0x300;
             i8080.write_u8(location, 0x0F);
-            i8080.set_register_pair(RegisterPair::H, 0x0300);
+            i8080.set_register_pair(RegisterPair::H, location);
             i8080.a = 0xFC;
             i8080.ana_m();
             assert_eq!(i8080.a, 0x0C);
             assert_eq!(i8080.get_flag(Flag::Z), false);
             assert_eq!(i8080.get_flag(Flag::C), false);
             assert_eq!(i8080.get_flag(Flag::P), true);
+            assert_eq!(i8080.get_flag(Flag::S), false);
+        }
+        #[test]
+        fn xra() {
+            let mut i8080 = i8080!();
+            i8080.a = 0b10110001;
+            i8080.b = 0b11010110;
+            i8080.xra(Register::B);
+            assert_eq!(i8080.a, 0b01100111);
+            assert_eq!(i8080.get_flag(Flag::Z), false);
+            assert_eq!(i8080.get_flag(Flag::C), false);
+            assert_eq!(i8080.get_flag(Flag::P), false);
+            assert_eq!(i8080.get_flag(Flag::S), false);
+        }
+        #[test]
+        fn xra_m() {
+            let mut i8080 = i8080!();
+            let location = 0x300;
+            i8080.write_u8(location, 0b11010110);
+            i8080.set_register_pair(RegisterPair::H, location);
+            i8080.a = 0b10110001;
+            i8080.xra_m();
+            assert_eq!(i8080.a, 0b01100111);
+            assert_eq!(i8080.get_flag(Flag::Z), false);
+            assert_eq!(i8080.get_flag(Flag::C), false);
+            assert_eq!(i8080.get_flag(Flag::P), false);
             assert_eq!(i8080.get_flag(Flag::S), false);
         }
     }
