@@ -269,6 +269,15 @@ impl I8080 {
             0xAD => {self.xra(Register::L); 4},                         // XRA L
             0xAE => {self.xra_m(); 7},                                  // XRA M
             0xAF => {self.xra(Register::A); 4},                         // XRA A
+
+            0xB0 => {self.ora(Register::B); 4},                         // ORA B
+            0xB1 => {self.ora(Register::C); 4},                         // ORA C
+            0xB2 => {self.ora(Register::D); 4},                         // ORA D
+            0xB3 => {self.ora(Register::E); 4},                         // ORA E
+            0xB4 => {self.ora(Register::H); 4},                         // ORA H
+            0xB5 => {self.ora(Register::L); 4},                         // ORA L
+            0xB6 => {self.ora_m(); 7},                                  // ORA M
+            0xB7 => {self.ora(Register::A); 4},                         // ORA A
             _ => {eprintln!("Invalid opcode: {opcode}"); 0}
         };
 
@@ -655,6 +664,16 @@ impl I8080 {
  
     fn xra_m(&mut self) {
         self.a ^= self.read_m();
+        self.set_flags(self.a as u16);
+    }
+    
+    fn ora(&mut self, register: Register) {
+        self.a |= self.get_register(register);
+        self.set_flags(self.a as u16);
+    }
+ 
+    fn ora_m(&mut self) {
+        self.a |= self.read_m();
         self.set_flags(self.a as u16);
     }
 }
@@ -1152,5 +1171,32 @@ mod tests {
             assert_eq!(i8080.get_flag(Flag::P), false);
             assert_eq!(i8080.get_flag(Flag::S), false);
         }
+        #[test]
+        fn ora() {
+            let mut i8080 = i8080!();
+            i8080.a = 0x33;
+            i8080.c = 0x0F;
+            i8080.ora(Register::C);
+            assert_eq!(i8080.a, 0x3F);
+            assert_eq!(i8080.get_flag(Flag::Z), false);
+            assert_eq!(i8080.get_flag(Flag::C), false);
+            assert_eq!(i8080.get_flag(Flag::P), true);
+            assert_eq!(i8080.get_flag(Flag::S), false);
+        }
+        #[test]
+        fn ora_m() {
+            let mut i8080 = i8080!();
+            let location = 0x300;
+            i8080.write_u8(location, 0x0F);
+            i8080.set_register_pair(RegisterPair::H, location);
+            i8080.a = 0x33;
+            i8080.ora_m();
+            assert_eq!(i8080.a, 0x3F);
+            assert_eq!(i8080.get_flag(Flag::Z), false);
+            assert_eq!(i8080.get_flag(Flag::C), false);
+            assert_eq!(i8080.get_flag(Flag::P), true);
+            assert_eq!(i8080.get_flag(Flag::S), false);
+        }
+
     }
 }
