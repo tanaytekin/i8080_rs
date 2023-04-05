@@ -292,6 +292,7 @@ impl I8080 {
             0xCE => {self.aci(); 7},                                    // ACI d8
             0xD6 => {self.sui(); 7},                                    // SUI d8
             0xDE => {self.sbi(); 7},                                    // SBI d8
+            0xE6 => {self.ani(); 7},                                    // ANI d8
             _ => {eprintln!("Invalid opcode: {opcode}"); 0}
         };
 
@@ -723,6 +724,11 @@ impl I8080 {
         let a = (self.a as u16) - (self.next_u8() as u16) - (self.get_carry() as u16);
         self.set_flags(a);
         self.a = (a & 0xFF) as u8;
+    }
+
+    fn ani(&mut self) {
+        self.a &= self.next_u8();
+        self.set_flags(self.a as u16);
     }
 }
 
@@ -1338,6 +1344,17 @@ mod tests {
             assert_eq!(i8080.get_flag(Flag::C), true);
             assert_eq!(i8080.get_flag(Flag::P), false);
             assert_eq!(i8080.get_flag(Flag::S), true);
+        }
+        #[test]
+        fn ani() {
+            let mut i8080 = i8080![0x0F];
+            i8080.a = 0x3A;
+            i8080.ani();
+            assert_eq!(i8080.a, 0x0A);
+            assert_eq!(i8080.get_flag(Flag::Z), false);
+            assert_eq!(i8080.get_flag(Flag::C), false);
+            assert_eq!(i8080.get_flag(Flag::P), true);
+            assert_eq!(i8080.get_flag(Flag::S), false);
         }
 
     }
