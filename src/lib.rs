@@ -736,6 +736,11 @@ impl I8080 {
         self.a ^= self.next_u8();
         self.set_flags(self.a as u16);
     }
+ 
+    fn ori(&mut self) {
+        self.a |= self.next_u8();
+        self.set_flags(self.a as u16);
+    }
 }
 
 #[cfg(test)]
@@ -1373,6 +1378,16 @@ mod tests {
             assert_eq!(i8080.get_flag(Flag::P), false);
             assert_eq!(i8080.get_flag(Flag::S), true);
         }
-
+        #[test]
+        fn ori() {
+            let mut i8080 = i8080![0x0F];
+            i8080.a = 0xB5;
+            i8080.ori();
+            assert_eq!(i8080.a, 0xBF);
+            assert_eq!(i8080.get_flag(Flag::Z), false);
+            assert_eq!(i8080.get_flag(Flag::C), false);
+            assert_eq!(i8080.get_flag(Flag::P), false);
+            assert_eq!(i8080.get_flag(Flag::S), true);
+        }
     }
 }
