@@ -307,6 +307,11 @@ impl I8080 {
             0x1B => {self.dcx(RegisterPair::D); 5},                     // DCX D
             0x2B => {self.dcx(RegisterPair::H); 5},                     // DCX H
             0x3B => {self.dcx_sp(); 5},                                 // DCX SP
+
+            0x09 => {self.dad(RegisterPair::B); 10},                    // DAD B
+            0x19 => {self.dad(RegisterPair::D); 10},                    // DAD D
+            0x29 => {self.dad(RegisterPair::H); 10},                    // DAD H
+            0x39 => {self.dad_sp(); 10},                                // DAD SP
             _ => {eprintln!("Invalid opcode: {opcode}"); 0}
         };
 
@@ -774,6 +779,18 @@ impl I8080 {
 
     fn dcx_sp(&mut self) {
         self.sp -= 1;
+    }
+
+    fn dad(&mut self, pair: RegisterPair) {
+        let sum = (self.get_register_pair(pair) as u32) + (self.get_register_pair(RegisterPair::H) as u32);
+        self.set_carry((sum > 0xFFFF) as u8);
+        self.set_register_pair(RegisterPair::H, (sum & 0xFFFF) as u16);
+    }
+ 
+    fn dad_sp(&mut self) {
+        let sum = (self.sp as u32) + (self.get_register_pair(RegisterPair::H) as u32);
+        self.set_carry((sum > 0xFFFF) as u8);
+        self.set_register_pair(RegisterPair::H, (sum & 0xFFFF) as u16);
     }
 }
 
@@ -1465,6 +1482,26 @@ mod tests {
             i8080.sp = 0xFFFF;
             i8080.dcx_sp();
             assert_eq!(i8080.sp, 0xFFFE);
+        }
+        #[test]
+        fn dad() {
+            let mut i8080 = i8080!();
+            i8080.set_register_pair(RegisterPair::B, 0x339F);
+            i8080.set_register_pair(RegisterPair::H, 0xA17B);
+            i8080.dad(RegisterPair::B);
+            assert_eq!(i8080.get_register_pair(RegisterPair::H), 0xD51A);
+            assert_eq!(i8080.get_flag(Flag::C), false);
+
+            i8080.set_register_pair(RegisterPair::B, 0xFFDD);
+            i8080.set_register_pair(RegisterPair::H, 0x0123);
+            i8080.dad(RegisterPair::B);
+            assert_eq!(i8080.get_register_pair(RegisterPair::H), 0x0100);
+            assert_eq!(i8080.get_flag(Flag::C), true);
+
+            i8080.sp = 0x1232;
+            i8080.dad_sp();
+            assert_eq!(i8080.get_register_pair(RegisterPair::H), 0x1332);
+            assert_eq!(i8080.get_flag(Flag::C), false);
         }
     }
 }
