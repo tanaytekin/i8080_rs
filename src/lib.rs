@@ -251,6 +251,15 @@ impl I8080 {
             0x9D => {self.sbb(Register::L); 4},                         // SBB L
             0x9E => {self.sbb_m(); 7},                                  // SBB M
             0x9F => {self.sbb(Register::A); 4},                         // SBB A
+ 
+            0xA0 => {self.ana(Register::B); 4},                         // ANA B
+            0xA1 => {self.ana(Register::C); 4},                         // ANA C
+            0xA2 => {self.ana(Register::D); 4},                         // ANA D
+            0xA3 => {self.ana(Register::E); 4},                         // ANA E
+            0xA4 => {self.ana(Register::H); 4},                         // ANA H
+            0xA5 => {self.ana(Register::L); 4},                         // ANA L
+            0xA6 => {self.ana_m(); 7},                                  // ANA M
+            0xA7 => {self.ana(Register::A); 4},                         // ANA A
             _ => {eprintln!("Invalid opcode: {opcode}"); 0}
         };
 
@@ -618,6 +627,16 @@ impl I8080 {
         let a = (self.a as u16) - (self.read_m() as u16) - (self.get_carry() as u16);
         self.set_flags(a);
         self.a = (a & 0xFF) as u8;
+    }
+
+    fn ana(&mut self, register: Register) {
+        self.a &= self.get_register(register);
+        self.set_flags(self.a as u16);
+    }
+ 
+    fn ana_m(&mut self) {
+        self.a &= self.read_m();
+        self.set_flags(self.a as u16);
     }
 }
 
@@ -1060,6 +1079,32 @@ mod tests {
             assert_eq!(i8080.get_flag(Flag::Z), false);
             assert_eq!(i8080.get_flag(Flag::C), false);
             assert_eq!(i8080.get_flag(Flag::P), false);
+            assert_eq!(i8080.get_flag(Flag::S), false);
+        }
+        #[test]
+        fn ana() {
+            let mut i8080 = i8080!();
+            i8080.a = 0xFC;
+            i8080.c = 0x0F;
+            i8080.ana(Register::C);
+            assert_eq!(i8080.a, 0x0C);
+            assert_eq!(i8080.get_flag(Flag::Z), false);
+            assert_eq!(i8080.get_flag(Flag::C), false);
+            assert_eq!(i8080.get_flag(Flag::P), true);
+            assert_eq!(i8080.get_flag(Flag::S), false);
+        }
+        #[test]
+        fn ana_m() {
+            let mut i8080 = i8080!();
+            let location = 0x300;
+            i8080.write_u8(location, 0x0F);
+            i8080.set_register_pair(RegisterPair::H, 0x0300);
+            i8080.a = 0xFC;
+            i8080.ana_m();
+            assert_eq!(i8080.a, 0x0C);
+            assert_eq!(i8080.get_flag(Flag::Z), false);
+            assert_eq!(i8080.get_flag(Flag::C), false);
+            assert_eq!(i8080.get_flag(Flag::P), true);
             assert_eq!(i8080.get_flag(Flag::S), false);
         }
     }
