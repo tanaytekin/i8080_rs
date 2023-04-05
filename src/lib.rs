@@ -20,6 +20,7 @@ enum Register {
     L,
 }
 
+#[derive(Clone, Copy)]
 enum RegisterPair {
     B,
     D,
@@ -296,6 +297,11 @@ impl I8080 {
             0xEE => {self.xri(); 7},                                    // XRI d8
             0xF6 => {self.ori(); 7},                                    // ORI d8
             0xFE => {self.cpi(); 7},                                    // CPI d8
+
+            0x03 => {self.inx(RegisterPair::B); 5},                     // INX B
+            0x13 => {self.inx(RegisterPair::D); 5},                     // INX D
+            0x23 => {self.inx(RegisterPair::H); 5},                     // INX H
+            0x33 => {self.inx_sp(); 5},                                 // INX SP
             _ => {eprintln!("Invalid opcode: {opcode}"); 0}
         };
 
@@ -747,6 +753,14 @@ impl I8080 {
     fn cpi(&mut self) {
         let a = (self.a as u16) - (self.next_u8() as u16);
         self.set_flags(a);
+    }
+
+    fn inx(&mut self, pair: RegisterPair) {
+        self.set_register_pair(pair, self.get_register_pair(pair) + 1);
+    }
+
+    fn inx_sp(&mut self) {
+        self.sp += 1;
     }
 }
 
@@ -1406,6 +1420,22 @@ mod tests {
             assert_eq!(i8080.get_flag(Flag::C), false);
             assert_eq!(i8080.get_flag(Flag::P), true);
             assert_eq!(i8080.get_flag(Flag::S), false);
+        }
+        #[test]
+        fn inx() {
+            let mut i8080 = i8080!();
+            i8080.d = 0x38;
+            i8080.e = 0xFF;
+            i8080.inx(RegisterPair::D);
+            assert_eq!(i8080.d, 0x39);
+            assert_eq!(i8080.e, 0x00);
+        }
+        #[test]
+        fn inx_sp() {
+            let mut i8080 = i8080!();
+            i8080.sp = 0xFFFF;
+            i8080.inx_sp();
+            assert_eq!(i8080.sp, 0);
         }
     }
 }
