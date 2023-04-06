@@ -322,6 +322,18 @@ impl I8080 {
             0xF0 => {self.rp(); 5},                                     // RP
             0xE8 => {self.rpe(); 5},                                    // RPE
             0xE0 => {self.rpo(); 5},                                    // RPO
+
+            0xE9 => {self.pchl(); 5},                                   // PCHL
+            0xC3 | 0xCB => {self.jmp(); 10},                            // JMP a16
+            0xDA => {self.jc(); 10},                                    // JC a16
+            0xD2 => {self.jnc(); 10},                                   // JNC a16
+            0xCA => {self.jz(); 10},                                    // JZ a16
+            0xC2 => {self.jnz(); 10},                                   // JNZ a16
+            0xFA => {self.jm(); 10},                                    // JM a16
+            0xF2 => {self.jp(); 10},                                    // JP a16
+            0xEA => {self.jpe(); 10},                                   // JPE a16
+            0xE2 => {self.jpo(); 10},                                   // JPO a16
+
             _ => {eprintln!("Invalid opcode: {opcode}"); 0}
         };
 
@@ -863,6 +875,79 @@ impl I8080 {
             self.cycles += 6;
         }
     }
+
+    fn pchl(&mut self) {
+        self.pc = self.get_register_pair(RegisterPair::H);
+    }
+
+    fn jmp(&mut self) {
+        self.pc = self.next_u16();
+    }
+ 
+    fn jc(&mut self) {
+        if self.get_flag(Flag::C) {
+            self.jmp();
+        } else {
+            self.pc += 2;
+        }
+    }
+ 
+    fn jnc(&mut self) {
+        if !self.get_flag(Flag::C) {
+            self.jmp();
+        } else {
+            self.pc += 2;
+        }
+    }
+ 
+    fn jz(&mut self) {
+        if self.get_flag(Flag::Z) {
+            self.jmp();
+        } else {
+            self.pc += 2;
+        }
+    }
+ 
+    fn jnz(&mut self) {
+        if !self.get_flag(Flag::Z) {
+            self.jmp();
+        } else {
+            self.pc += 2;
+        }
+    }
+ 
+    fn jm(&mut self) {
+        if self.get_flag(Flag::S) {
+            self.jmp();
+        } else {
+            self.pc += 2;
+        }
+    }
+ 
+    fn jp(&mut self) {
+        if !self.get_flag(Flag::S) {
+            self.jmp();
+        } else {
+            self.pc += 2;
+        }
+    }
+
+    fn jpe(&mut self) {
+        if self.get_flag(Flag::P) {
+            self.jmp();
+        } else {
+            self.pc += 2;
+        }
+    }
+
+    fn jpo(&mut self) {
+        if !self.get_flag(Flag::P) {
+            self.jmp();
+        } else {
+            self.pc += 2;
+        }
+    }
+
 }
 
 #[cfg(test)]
