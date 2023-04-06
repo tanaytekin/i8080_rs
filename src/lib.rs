@@ -312,6 +312,16 @@ impl I8080 {
             0x19 => {self.dad(RegisterPair::D); 10},                    // DAD D
             0x29 => {self.dad(RegisterPair::H); 10},                    // DAD H
             0x39 => {self.dad_sp(); 10},                                // DAD SP
+
+            0xC9 | 0xD9 => {self.ret(); 10},                            // RET
+            0xD8 => {self.rc(); 5},                                     // RC
+            0xD0 => {self.rnc(); 5},                                    // RNC
+            0xC8 => {self.rz(); 5},                                     // RZ
+            0xC0 => {self.rnz(); 5},                                    // RNZ
+            0xF8 => {self.rm(); 5},                                     // RM
+            0xF0 => {self.rp(); 5},                                     // RP
+            0xE8 => {self.rpe(); 5},                                    // RPE
+            0xE0 => {self.rpo(); 5},                                    // RPO
             _ => {eprintln!("Invalid opcode: {opcode}"); 0}
         };
 
@@ -791,6 +801,67 @@ impl I8080 {
         let sum = (self.sp as u32) + (self.get_register_pair(RegisterPair::H) as u32);
         self.set_carry((sum > 0xFFFF) as u8);
         self.set_register_pair(RegisterPair::H, (sum & 0xFFFF) as u16);
+    }
+
+    fn ret(&mut self) {
+        self.pc = self.read_u16(self.sp);
+        self.sp += 2;
+    }
+
+    fn rc(&mut self) {
+        if self.get_flag(Flag::C) {
+            self.ret();
+            self.cycles += 6;
+        }
+    }
+
+    fn rnc(&mut self) {
+        if !self.get_flag(Flag::C) {
+            self.ret();
+            self.cycles += 6;
+        }
+    }
+ 
+    fn rz(&mut self) {
+        if self.get_flag(Flag::Z) {
+            self.ret();
+            self.cycles += 6;
+        }
+    }
+ 
+    fn rnz(&mut self) {
+        if !self.get_flag(Flag::Z) {
+            self.ret();
+            self.cycles += 6;
+        }
+    }
+ 
+    fn rm(&mut self) {
+        if self.get_flag(Flag::S) {
+            self.ret();
+            self.cycles += 6;
+        }
+    }
+ 
+    fn rp(&mut self) {
+        if !self.get_flag(Flag::S) {
+            self.ret();
+            self.cycles += 6;
+        }
+    }
+
+    fn rpe(&mut self) {
+        if self.get_flag(Flag::P) {
+            self.ret();
+            self.cycles += 6;
+        }
+    }
+
+    fn rpo(&mut self) {
+        if !self.get_flag(Flag::P) {
+            self.ret();
+            self.cycles += 6;
+        }
     }
 }
 
