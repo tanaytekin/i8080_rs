@@ -334,6 +334,16 @@ impl I8080 {
             0xEA => {self.jpe(); 10},                                   // JPE a16
             0xE2 => {self.jpo(); 10},                                   // JPO a16
 
+            0xCD | 0xDD | 0xED | 0xFD  => {self.call(); 17},            // CALL a16
+            0xDC => {self.cc(); 11},                                    // CC a16
+            0xD4 => {self.cnc(); 11},                                   // CNC a16
+            0xCC => {self.cz(); 11},                                    // CZ a16
+            0xC4 => {self.cnz(); 11},                                   // CNZ a16
+            0xFC => {self.cm(); 11},                                    // CM a16
+            0xF4 => {self.cp(); 11},                                    // CP a16
+            0xEC => {self.cpe(); 11},                                   // CPE a16
+            0xE4 => {self.cpo(); 11},                                   // CPO a16
+
             _ => {eprintln!("Invalid opcode: {opcode}"); 0}
         };
 
@@ -948,6 +958,83 @@ impl I8080 {
         }
     }
 
+    fn call(&mut self) {
+        self.sp -= 2;
+        self.write_u16(self.sp, self.pc + 2);
+        self.jmp();
+    }
+
+    fn cc(&mut self) {
+        if self.get_flag(Flag::C) {
+            self.call();
+            self.cycles += 6;
+        } else {
+            self.pc += 2;
+        }
+    }
+
+    fn cnc(&mut self) {
+        if !self.get_flag(Flag::C) {
+            self.call();
+            self.cycles += 6;
+        } else {
+            self.pc += 2;
+        }
+    }
+ 
+    fn cz(&mut self) {
+        if self.get_flag(Flag::Z) {
+            self.call();
+            self.cycles += 6;
+        } else {
+            self.pc += 2;
+        }
+    }
+
+    fn cnz(&mut self) {
+        if !self.get_flag(Flag::Z) {
+            self.call();
+            self.cycles += 6;
+        } else {
+            self.pc += 2;
+        }
+    }
+
+    fn cm(&mut self) {
+        if self.get_flag(Flag::S) {
+            self.call();
+            self.cycles += 6;
+        } else {
+            self.pc += 2;
+        }
+    }
+
+    fn cp(&mut self) {
+        if !self.get_flag(Flag::S) {
+            self.call();
+            self.cycles += 6;
+        } else {
+            self.pc += 2;
+        }
+    }
+
+    fn cpe(&mut self) {
+        if self.get_flag(Flag::P) {
+            self.call();
+            self.cycles += 6;
+        } else {
+            self.pc += 2;
+        }
+    }
+
+    fn cpo(&mut self) {
+        if !self.get_flag(Flag::P) {
+            self.call();
+            self.cycles += 6;
+        } else {
+            self.pc += 2;
+        }
+    }
 }
 
 #[cfg(test)]
