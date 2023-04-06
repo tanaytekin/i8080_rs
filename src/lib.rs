@@ -344,6 +344,16 @@ impl I8080 {
             0xEC => {self.cpe(); 11},                                   // CPE a16
             0xE4 => {self.cpo(); 11},                                   // CPO a16
 
+            0xC7 => {self.rst(0); 11},                                  // RST 0
+            0xD7 => {self.rst(2); 11},                                  // RST 2
+            0xE7 => {self.rst(4); 11},                                  // RST 4
+            0xF7 => {self.rst(6); 11},                                  // RST 6
+                                                                        //
+            0xCF => {self.rst(1); 11},                                  // RST 1
+            0xDF => {self.rst(3); 11},                                  // RST 3
+            0xEF => {self.rst(5); 11},                                  // RST 5
+            0xFF => {self.rst(7); 11},                                  // RST 7
+
             _ => {eprintln!("Invalid opcode: {opcode}"); 0}
         };
 
@@ -1034,6 +1044,12 @@ impl I8080 {
         } else {
             self.pc += 2;
         }
+    }
+
+    fn rst(&mut self, value: u8) {
+        self.sp -= 2;
+        self.write_u16(self.sp, self.pc);
+        self.pc = (value << 3) as u16;
     }
 }
 
