@@ -40,6 +40,7 @@ pub struct I8080 {
     l: u8,
     flags: u8,
     cycles: usize,
+    inte: bool,
     memory: Box<[u8]>,
 }
 
@@ -57,6 +58,7 @@ impl I8080 {
             l: 0,
             flags: 0b00000010, // always: bit-1 = 1, bit-5 = 0
             cycles: 0,
+            inte: false,
             memory: vec![0; memory_size].into_boxed_slice(),
         }
     }
@@ -353,6 +355,9 @@ impl I8080 {
             0xDF => {self.rst(3); 11},                                  // RST 3
             0xEF => {self.rst(5); 11},                                  // RST 5
             0xFF => {self.rst(7); 11},                                  // RST 7
+
+            0xFB => {self.inte = true; 4},                              // EI
+            0xF3 => {self.inte = false; 4},                             // DI
 
             _ => {eprintln!("Invalid opcode: {opcode}"); 0}
         };
