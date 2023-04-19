@@ -1,3 +1,14 @@
+use std::borrow::Borrow;
+use std::rc::Rc;
+use std::cell::Cell;
+use std::io::Read;
+use std::fs::File;
+use std::path::Path;
+
+pub const DISPLAY_WIDTH: usize = 224;
+pub const DISPLAY_HEIGHT: usize = 256;
+pub const DISPLAY_SIZE: usize = DISPLAY_WIDTH * DISPLAY_HEIGHT;
+
 enum Flag {
     C = 0,
     P = 2,
@@ -28,6 +39,8 @@ enum RegisterPair {
     PSW,
 }
 
+pub type PortOut = fn(&I8080, u8, u8);
+
 pub struct I8080 {
     pc: u16,
     sp: u16,
@@ -39,13 +52,17 @@ pub struct I8080 {
     h: u8,
     l: u8,
     flags: u8,
-    cycles: usize,
     inte: bool,
-    memory: Box<[u8]>,
+    pub memory: Box<[u8]>,
+    devices: Vec<Rc<Cell<u8>>>,
+    pub opcode_count: u64,
+    pub cycles: u64,
+    pub cycles_remain: u64,
+    port_out: PortOut,
 }
 
 impl I8080 {
-    pub fn new(memory_size: usize) -> Self {
+    pub fn new(memory_size: usize, device_count: usize, port_out: PortOut) -> Self {
         Self {
             pc: 0,
             sp: 0,
@@ -57,19 +74,36 @@ impl I8080 {
             h: 0,
             l: 0,
             flags: 0b00000010, // always: bit-1 = 1, bit-5 = 0
-            cycles: 0,
             inte: false,
             memory: vec![0; memory_size].into_boxed_slice(),
+            devices: vec![Rc::new(Cell::new(0)); device_count],
+            opcode_count: 0,
+            cycles: 0,
+            cycles_remain: 0,
+            port_out,
         }
     }
 
-    pub fn cycle(&mut self) {
-        if self.cycles > 0 {
-            self.cycles -= 1;
+    pub fn load<P: AsRef<Path>>(&mut self, path: P, program_offset: usize, stack_offset: usize) {
+        let mut file = File::open(path).unwrap();
+        let romsize = file.metadata().unwrap().len();
+        if romsize > self.memory.len() as u64 {
+            todo!("Handle error")
+        }
+        file.read_exact(&mut self.memory[program_offset..program_offset + romsize as usize]).unwrap();
+        self.pc = program_offset as u16;
+        self.sp = stack_offset as u16;
+    }
+
+    pub fn emulate(&mut self) {
+        if self.cycles_remain > 0 {
+            self.cycles_remain -= 1;
+            self.cycles += 1;
             return;
         }
 
         let opcode = self.next_u8();
+        //println!("opcode: {0:x}", opcode);
         let cycles = match opcode {
             0x00 | 0x10 | 0x20 | 0x30 | 0x08 | 0x18 | 0x28 | 0x38 => 4, // NOP
             0x01 => {self.lxi(RegisterPair::B); 10},                    // LXI B,d16
@@ -91,7 +125,7 @@ impl I8080 {
             0x2A => {self.lhld(); 16},                                  // LHLD a16
             0xE3 => {self.xthl(); 18},                                  // XTHL
             0xF9 => {self.sphl(); 5},                                   // SPHL
-            0xEB => {self.xchg(); 5},                                   // XCHG
+            0xEB => {self.xchg(); 4},                                   // XCHG
 
             0x02 => {self.stax(RegisterPair::B); 7},                    // STAX B
             0x12 => {self.stax(RegisterPair::D); 7},                    // STAX D
@@ -113,41 +147,41 @@ impl I8080 {
             0x40 => 5,                                                  // MOV B,B
             0x50 => {self.mov(Register::D, Register::B); 5},            // MOV D,B
             0x60 => {self.mov(Register::H, Register::B); 5},            // MOV H,B
-            0x70 => {self.mov_m(Register::B); 7},                       // MOV M,B
+            0x70 => {self.mov_to_m(Register::B); 7},                       // MOV M,B
 
             0x41 => {self.mov(Register::B, Register::C); 5},            // MOV B,C
             0x51 => {self.mov(Register::D, Register::C); 5},            // MOV D,C
             0x61 => {self.mov(Register::H, Register::C); 5},            // MOV H,C
-            0x71 => {self.mov_m(Register::C); 7},                       // MOV M,C
+            0x71 => {self.mov_to_m(Register::C); 7},                       // MOV M,C
 
             0x42 => {self.mov(Register::B, Register::D); 5},            // MOV B,D
             0x52 =>  5,                                                 // MOV D,D
             0x62 => {self.mov(Register::H, Register::D); 5},            // MOV H,D
-            0x72 => {self.mov_m(Register::D); 7},                       // MOV M,D
+            0x72 => {self.mov_to_m(Register::D); 7},                       // MOV M,D
             
             0x43 => {self.mov(Register::B, Register::E); 5},            // MOV B,E
             0x53 => {self.mov(Register::D, Register::E); 5},            // MOV D,E
             0x63 => {self.mov(Register::H, Register::E); 5},            // MOV H,E
-            0x73 => {self.mov_m(Register::E); 7},                       // MOV M,E
+            0x73 => {self.mov_to_m(Register::E); 7},                       // MOV M,E
 
             0x44 => {self.mov(Register::B, Register::H); 5},            // MOV B,H
             0x54 => {self.mov(Register::D, Register::H); 5},            // MOV H,H
             0x64 =>  5,                                                 // MOV D,H
-            0x74 => {self.mov_m(Register::H); 7},                       // MOV M,H
+            0x74 => {self.mov_to_m(Register::H); 7},                       // MOV M,H
             
             0x45 => {self.mov(Register::B, Register::L); 5},            // MOV B,L
             0x55 => {self.mov(Register::D, Register::L); 5},            // MOV D,L
             0x65 => {self.mov(Register::H, Register::L); 5},            // MOV H,L
-            0x75 => {self.mov_m(Register::L); 7},                       // MOV M,L
+            0x75 => {self.mov_to_m(Register::L); 7},                       // MOV M,L
                                                                         
-            0x46 => {self.mov_m(Register::B); 7},                       // MOV B,M
-            0x56 => {self.mov_m(Register::D); 7},                       // MOV D,M
-            0x66 => {self.mov_m(Register::H); 7},                       // MOV H,M
+            0x46 => {self.mov_from_m(Register::B); 7},                       // MOV B,M
+            0x56 => {self.mov_from_m(Register::D); 7},                       // MOV D,M
+            0x66 => {self.mov_from_m(Register::H); 7},                       // MOV H,M
             
             0x47 => {self.mov(Register::B, Register::A); 5},            // MOV B,A
             0x57 => {self.mov(Register::D, Register::A); 5},            // MOV D,A
             0x67 => {self.mov(Register::H, Register::A); 5},            // MOV H,A
-            0x77 => {self.mov_m(Register::A); 7},                       // MOV M,A
+            0x77 => {self.mov_to_m(Register::A); 7},                       // MOV M,A
             
             0x48 => {self.mov(Register::C, Register::B); 5},            // MOV C,B
             0x58 => {self.mov(Register::E, Register::B); 5},            // MOV E,B
@@ -179,10 +213,10 @@ impl I8080 {
             0x6D => 5,                                                  // MOV L,L
             0x7D => {self.mov(Register::A, Register::L); 5},            // MOV A,L
                                                                         
-            0x4E => {self.mov_m(Register::C); 7},                       // MOV C,M
-            0x5E => {self.mov_m(Register::E); 7},                       // MOV E,M
-            0x6E => {self.mov_m(Register::L); 7},                       // MOV L,M
-            0x7E => {self.mov_m(Register::A); 7},                       // MOV A,M
+            0x4E => {self.mov_from_m(Register::C); 7},                       // MOV C,M
+            0x5E => {self.mov_from_m(Register::E); 7},                       // MOV E,M
+            0x6E => {self.mov_from_m(Register::L); 7},                       // MOV L,M
+            0x7E => {self.mov_from_m(Register::A); 7},                       // MOV A,M
                                                                         
             0x4F => {self.mov(Register::C, Register::A); 5},            // MOV C,A
             0x5F => {self.mov(Register::E, Register::A); 5},            // MOV E,A
@@ -359,10 +393,14 @@ impl I8080 {
             0xFB => {self.inte = true; 4},                              // EI
             0xF3 => {self.inte = false; 4},                             // DI
 
-            _ => {eprintln!("Invalid opcode: {opcode}"); 0}
+            0xD3 => {self.out(); 10},                                   // OUT d8
+            0xDB => {self.r#in(); 10},                                  // IN d8
+
+            _ => {eprintln!("Invalid opcode: {0:x}", opcode); 0}
         };
 
-        self.cycles += cycles;
+        self.cycles_remain += cycles;
+        self.opcode_count += 1;
     }
 
     fn read_u8(&self, location: u16) -> u8 {
@@ -388,7 +426,8 @@ impl I8080 {
     }
 
     fn write_m(&mut self, value: u8) {
-        self.memory[self.get_register_pair(RegisterPair::H) as usize] = value;
+        let location = self.get_register_pair(RegisterPair::H) as usize;
+        self.memory[location] = value;
     }
 
     fn next_u8(&mut self) -> u8 {
@@ -491,7 +530,7 @@ impl I8080 {
     #[allow(arithmetic_overflow)]
     fn set_flags(&mut self, value: u16) {
         let flags = ((Self::parity((value & 0xFF) as u8) as u8) << Flag::P as u8) |
-                    (((value > 0xF) as u8) << Flag::A as u8) |
+                    // (((value > 0xF) as u8) << Flag::A as u8) |
                     (((value == 0) as u8) << Flag::Z as u8) |
                     ((((value & 0x80) > 0) as u8) << Flag::S as u8) |
                     (((value > 0xFF) as u8) << Flag::C as u8);
@@ -501,7 +540,7 @@ impl I8080 {
     #[allow(arithmetic_overflow)]
     fn set_flags_without_carry(&mut self, value: u8) {
         let flags = ((Self::parity(value) as u8) << Flag::P as u8) |
-                    (((value > 0xF) as u8) << Flag::A as u8) |
+                    // (((value > 0xF) as u8) << Flag::A as u8) |
                     (((value == 0) as u8) << Flag::Z as u8) |
                     ((((value & 0x80) > 0) as u8) << Flag::S as u8);
         let mask = !(CONSTANT_FLAGS | (1 << Flag::C as u8));
@@ -512,7 +551,7 @@ impl I8080 {
         let value = self.next_u16();
         self.set_register_pair(pair, value);
     }
-    
+ 
     fn lxi_sp(&mut self) {
         self.sp = self.next_u16();
     }
@@ -580,12 +619,12 @@ impl I8080 {
     }
 
     fn sta(&mut self) {
-        let location = self.get_register_pair(RegisterPair::H);
+        let location = self.next_u16();
         self.write_u8(location, self.a);
     }
 
     fn lda(&mut self) {
-        let location = self.get_register_pair(RegisterPair::H);
+        let location = self.next_u16();
         self.a = self.read_u8(location);
     }
 
@@ -594,9 +633,14 @@ impl I8080 {
         self.set_register(dst, value);
     }
 
-    fn mov_m(&mut self, register: Register) {
+    fn mov_to_m(&mut self, register: Register) {
         let value = self.get_register(register);
         self.write_m(value);
+    }
+ 
+    fn mov_from_m(&mut self, register: Register) {
+        let value = self.read_m();
+        self.set_register(register, value);
     }
 
     fn inr(&mut self, register: Register) {
@@ -975,8 +1019,11 @@ impl I8080 {
 
     fn call(&mut self) {
         self.sp -= 2;
-        self.write_u16(self.sp, self.pc + 2);
+        self.write_u16(self.sp, self.pc+2);
         self.jmp();
+        // println!("pc: {:4x}", self.pc);
+        // println!("sp: {:4x}", self.sp);
+        // println!("read: {:4x}", self.read_u16(self.sp));
     }
 
     fn cc(&mut self) {
@@ -1056,6 +1103,37 @@ impl I8080 {
         self.write_u16(self.sp, self.pc);
         self.pc = (value << 3) as u16;
     }
+
+    fn r#in(&mut self) {
+        let device_index = self.next_u8();
+        self.a = self.devices[device_index as usize].get();
+        self.a = 0xFF;
+    }
+
+    fn out(&mut self) {
+        let device_index = self.next_u8();
+        (self.port_out)(self, device_index, self.a);
+        self.devices[device_index as usize].set(self.a);
+    }
+
+    pub fn print(&self) {
+        print!("PC: {:04X},", self.pc);
+        print!(" AF: {:04X},", self.get_register_pair(RegisterPair::PSW));
+        print!(" BC: {:04X},", self.get_register_pair(RegisterPair::B));
+        print!(" DE: {:04X},", self.get_register_pair(RegisterPair::D));
+        print!(" HL: {:04X},", self.get_register_pair(RegisterPair::H));
+        print!(" SP: {:04X},", self.sp);
+        // print!("flags: {:#010b}", self.flags);
+        print!(" CYC: {}", self.cycles);
+        print!("  ({:02X} {:02X} {:02X} {:02X})", self.read_u8(self.pc), self.read_u8(self.pc + 1), self.read_u8(self.pc + 2), self.read_u8(self.pc + 3));
+        print!("\n");
+
+        // println!("af: {:#06x}\tbc: {:#06x}\tde: {:#06x}\t",
+        //          self.get_register_pair(RegisterPair::PSW),
+        //          self.get_register_pair(RegisterPair::B),
+        //          self.get_register_pair(RegisterPair::D),
+        //          );
+    }
 }
 
 #[cfg(test)]
@@ -1064,17 +1142,18 @@ mod tests {
 
     const TESTS_DEFAULT_MEMORY_SIZE: usize = 1024;
     const TESTS_DEFAULT_SP: u16 = TESTS_DEFAULT_MEMORY_SIZE as u16 / 2;
+    fn empty_port_out(_: &I8080, _:u8, _: u8) {}
     macro_rules! i8080 {
         () => {
             {
-                let mut i8080 = I8080::new(TESTS_DEFAULT_MEMORY_SIZE);
+                let mut i8080 = I8080::new(TESTS_DEFAULT_MEMORY_SIZE, 0, empty_port_out);
                 i8080.sp = TESTS_DEFAULT_SP;
                 i8080
             }
         };
         ( $( $x:expr ), * ) => {
             {
-                let mut i8080 = I8080::new(TESTS_DEFAULT_MEMORY_SIZE);
+                let mut i8080 = I8080::new(TESTS_DEFAULT_MEMORY_SIZE, 0);
                 i8080.sp = TESTS_DEFAULT_SP;
                 let mut index = 0;
                 $(
@@ -1105,667 +1184,735 @@ mod tests {
             assert_eq!(I8080::parity(10), true);
         }
     }
-
+    //
+    // #[cfg(test)]
+    // mod opcode_tests {
+    //     use super::*;
+    //     #[test]
+    //     fn lxi() {
+    //         let mut i8080 = i8080![0x3, 0x1];
+    //         i8080.lxi(RegisterPair::H);
+    //         assert_eq!(i8080.h, 0x1);
+    //         assert_eq!(i8080.l, 0x3);
+    //     }
+    //     #[test]
+    //     fn lxi_sp() {
+    //         let mut i8080 = i8080![0xBC, 0x3A];
+    //         i8080.lxi_sp();
+    //         assert_eq!(i8080.sp, 0x3ABC);
+    //     }
+    //     #[test]
+    //     fn pop() {
+    //         let mut i8080 = i8080!();
+    //         i8080.write_u8(i8080.sp, 0x3D);
+    //         i8080.write_u8(i8080.sp + 1, 0x93);
+    //         i8080.pop(RegisterPair::H);
+    //         assert_eq!(i8080.h, 0x93);
+    //         assert_eq!(i8080.l, 0x3D);
+    //         assert_eq!(i8080.sp, TESTS_DEFAULT_SP + 2);
+    //     }
+    //
+    //     #[test]
+    //     fn push() {
+    //         let mut i8080 = i8080!();
+    //         i8080.d = 0x8F;
+    //         i8080.e = 0x9D;
+    //         i8080.push(RegisterPair::D);
+    //         assert_eq!(i8080.d, 0x8F);
+    //         assert_eq!(i8080.e, 0x9D);
+    //         assert_eq!(i8080.sp, TESTS_DEFAULT_SP - 2);
+    //         assert_eq!(i8080.read_u8(i8080.sp), 0x9D);
+    //         assert_eq!(i8080.read_u8(i8080.sp + 1), 0x8F);
+    //     }
+    //     #[test]
+    //     fn shld() {
+    //         let mut i8080 = i8080![0xA, 0x1];
+    //         i8080.h = 0xAE;
+    //         i8080.l = 0x29;
+    //         i8080.shld();
+    //         assert_eq!(i8080.read_u8(0x10A), 0x29);
+    //         assert_eq!(i8080.read_u8(0x10B), 0xAE);
+    //     }
+    //     #[test]
+    //     fn lhld() {
+    //         let mut i8080 = i8080![0x5B, 0x2];
+    //         i8080.write_u8(0x25B, 0xFF);
+    //         i8080.write_u8(0x25C, 0x03);
+    //         i8080.lhld();
+    //         assert_eq!(i8080.l, 0xFF);
+    //         assert_eq!(i8080.h, 0x03);
+    //     }
+    //     #[test]
+    //     fn xthl() {
+    //         let mut i8080 = i8080!();
+    //         i8080.write_u8(i8080.sp, 0xF0);
+    //         i8080.write_u8(i8080.sp + 1, 0x0D);
+    //         i8080.h = 0x0B;
+    //         i8080.l = 0x3C;
+    //         i8080.xthl();
+    //         assert_eq!(i8080.read_u8(i8080.sp), 0x3C);
+    //         assert_eq!(i8080.read_u8(i8080.sp + 1), 0x0B);
+    //         assert_eq!(i8080.h, 0x0D);
+    //         assert_eq!(i8080.l, 0xF0);
+    //     }
+    //     #[test]
+    //     fn sphl() {
+    //         let mut i8080 = i8080!();
+    //         i8080.h = 0x50;
+    //         i8080.l = 0x6C;
+    //         i8080.sphl();
+    //         assert_eq!(i8080.sp, 0x506C);
+    //     }
+    //     #[test]
+    //     fn xchg() {
+    //         let mut i8080 = i8080!();
+    //         i8080.d = 0x33;
+    //         i8080.e = 0x55;
+    //         i8080.h = 0x00;
+    //         i8080.l = 0xFF;
+    //         i8080.xchg();
+    //         assert_eq!(i8080.d, 0x00);
+    //         assert_eq!(i8080.e, 0xFF);
+    //         assert_eq!(i8080.h, 0x33);
+    //         assert_eq!(i8080.l, 0x55);
+    //     }
+    //     #[test]
+    //     fn stax() {
+    //         let mut i8080 = i8080!();
+    //         i8080.a = 0xCC;
+    //         i8080.b = 0x02;
+    //         i8080.c = 0x16;
+    //         i8080.stax(RegisterPair::B);
+    //         assert_eq!(i8080.read_u8(0x0216), i8080.a);
+    //     }
+    //     #[test]
+    //     fn ldax() {
+    //         let mut i8080 = i8080!();
+    //         i8080.write_u8(0x0216, 0xCC);
+    //         i8080.d = 0x02;
+    //         i8080.e = 0x16;
+    //         i8080.ldax(RegisterPair::D);
+    //         assert_eq!(i8080.read_u8(0x0216), i8080.a);
+    //     }
+    //     #[test]
+    //     fn mvi() {
+    //         let mut i8080 = i8080![0x02, 0x34, 0xCC];
+    //         i8080.mvi(Register::H);
+    //         assert_eq!(i8080.get_register(Register::H), 0x02);
+    //         i8080.mvi(Register::L);
+    //         assert_eq!(i8080.get_register(Register::L), 0x34);
+    //         i8080.mvi_m();
+    //         assert_eq!(i8080.read_u8(0x0234), 0xCC);
+    //     }
+    //     #[test]
+    //     fn mvi_m() {
+    //         let mut i8080 = i8080![0xCC];
+    //         let location = 0x0234;
+    //         i8080.set_register_pair(RegisterPair::H, location);
+    //         i8080.mvi_m();
+    //         assert_eq!(i8080.read_u8(location), 0xCC);
+    //     }
+    //     #[test]
+    //     fn sta() {
+    //         let mut i8080 = i8080!();
+    //         i8080.set_register_pair(RegisterPair::H, 0x0234);
+    //         i8080.set_register(Register::A, 0x12);
+    //         i8080.sta();
+    //         assert_eq!(i8080.get_register(Register::A), i8080.read_u8(0x0234));
+    //     }
+    //     #[test]
+    //     fn lda() {
+    //         let mut i8080 = i8080!();
+    //         i8080.write_u8(0x300, 0xFE);
+    //         i8080.set_register_pair(RegisterPair::H, 0x300);
+    //         i8080.lda();
+    //         assert_eq!(i8080.get_register(Register::A), i8080.read_u8(0x300));
+    //     }
+    //     #[test]
+    //     fn mov() {
+    //         let mut i8080 = i8080!();
+    //         i8080.set_register(Register::A, 0x13);
+    //         i8080.mov(Register::D, Register::A);
+    //         assert_eq!(i8080.get_register(Register::D), i8080.get_register(Register::A));
+    //     }
+    //     #[test]
+    //     fn mov_m() {
+    //         let mut i8080 = i8080!();
+    //         i8080.set_register(Register::A, 0x13);
+    //         i8080.set_register_pair(RegisterPair::H, 0x0300);
+    //         i8080.mov_m(Register::A);
+    //         assert_eq!(i8080.get_register(Register::A), i8080.read_u8(0x300));
+    //     }
+    //     #[test]
+    //     fn inr() {
+    //         let mut i8080 = i8080!();
+    //         i8080.set_register(Register::A, 0b10100010);
+    //         i8080.inr(Register::A);
+    //         assert_eq!(i8080.get_register(Register::A), 0b10100011); 
+    //         assert_eq!(i8080.get_flag(Flag::S), true);
+    //         assert_eq!(i8080.get_flag(Flag::Z), false);
+    //         assert_eq!(i8080.get_flag(Flag::A), true);
+    //         assert_eq!(i8080.get_flag(Flag::P), true);
+    //     }
+    //     #[test]
+    //     fn inr_m() {
+    //         let mut i8080 = i8080!();
+    //         let location = 0x300;
+    //         i8080.write_u8(location, 0b10100010);
+    //         i8080.set_register_pair(RegisterPair::H, location);
+    //         i8080.inr_m();
+    //         assert_eq!(i8080.read_u8(location), 0b10100011);
+    //         assert_eq!(i8080.get_flag(Flag::S), true);
+    //         assert_eq!(i8080.get_flag(Flag::Z), false);
+    //         assert_eq!(i8080.get_flag(Flag::A), true);
+    //         assert_eq!(i8080.get_flag(Flag::P), true);
+    //     }
+    //     #[test]
+    //     fn dcr() {
+    //         let mut i8080 = i8080!();
+    //         i8080.set_register(Register::A, 0b10000000);
+    //         i8080.dcr(Register::A);
+    //         assert_eq!(i8080.get_register(Register::A), 0b01111111); 
+    //         assert_eq!(i8080.get_flag(Flag::S), false);
+    //         assert_eq!(i8080.get_flag(Flag::Z), false);
+    //         assert_eq!(i8080.get_flag(Flag::A), true);
+    //         assert_eq!(i8080.get_flag(Flag::P), false);
+    //     }
+    //     #[test]
+    //     fn dcr_m() {
+    //         let mut i8080 = i8080!();
+    //         let location = 0x300;
+    //         i8080.write_u8(location, 0b10000000);
+    //         i8080.set_register_pair(RegisterPair::H, location);
+    //         i8080.dcr_m();
+    //         assert_eq!(i8080.read_u8(location), 0b01111111);
+    //         assert_eq!(i8080.get_flag(Flag::S), false);
+    //         assert_eq!(i8080.get_flag(Flag::Z), false);
+    //         assert_eq!(i8080.get_flag(Flag::A), true);
+    //         assert_eq!(i8080.get_flag(Flag::P), false);
+    //     }
+    //     #[test]
+    //     fn rlc() {
+    //         let mut i8080 = i8080!();
+    //         i8080.set_register(Register::A, 0b11110010);
+    //         i8080.rlc();
+    //         assert_eq!(i8080.a, 0b11100101);
+    //         assert_eq!(i8080.get_flag(Flag::C), true);
+    //         i8080.set_register(Register::A, 0b01100111);
+    //         i8080.rlc();
+    //         assert_eq!(i8080.a, 0b11001110);
+    //         assert_eq!(i8080.get_flag(Flag::C), false);
+    //     }
+    //
+    //     #[test]
+    //     fn ral() {
+    //         let mut i8080 = i8080!();
+    //         i8080.set_register(Register::A, 0b10110101);
+    //         i8080.ral();
+    //         assert_eq!(i8080.a, 0b01101010);
+    //         assert_eq!(i8080.get_flag(Flag::C), true);
+    //         i8080.ral();
+    //         assert_eq!(i8080.a, 0b11010101);
+    //         assert_eq!(i8080.get_flag(Flag::C), false);
+    //     }
+    //     #[test]
+    //     fn rrc() {
+    //         let mut i8080 = i8080!();
+    //         i8080.set_register(Register::A, 0b11110010);
+    //         i8080.rrc();
+    //         assert_eq!(i8080.a, 0b01111001);
+    //         assert_eq!(i8080.get_flag(Flag::C), false);
+    //         i8080.rrc();
+    //         assert_eq!(i8080.a, 0b10111100);
+    //         assert_eq!(i8080.get_flag(Flag::C), true);
+    //     }
+    //     #[test]
+    //     fn rar() {
+    //         let mut i8080 = i8080!();
+    //         i8080.set_register(Register::A, 0b01101010);
+    //         i8080.set_carry(1);
+    //         i8080.rar();
+    //         assert_eq!(i8080.a, 0b10110101);
+    //         assert_eq!(i8080.get_flag(Flag::C), false);
+    //         i8080.rar();
+    //         assert_eq!(i8080.a, 0b01011010);
+    //         assert_eq!(i8080.get_flag(Flag::C), true);
+    //     }
+    //     #[test]
+    //     fn stc() {
+    //         let mut i8080 = i8080!();
+    //         i8080.stc();
+    //         assert_eq!(i8080.get_flag(Flag::C), true);
+    //     }
+    //     #[test]
+    //     fn cmc() {
+    //         let mut i8080 = i8080!();
+    //         i8080.flags = 0b11000110;
+    //         i8080.stc();
+    //         assert_eq!(i8080.flags, 0b11000111);
+    //     }
+    //     #[test]
+    //     fn cma() {
+    //         let mut i8080 = i8080!();
+    //         i8080.a = 0b01010001;
+    //         i8080.cma();
+    //         assert_eq!(i8080.a, 0b10101110);
+    //     }
+    //     #[test]
+    //     fn daa() {
+    //         let mut i8080 = i8080!();
+    //         i8080.a = 0b10011011;
+    //         i8080.daa();
+    //         assert_eq!(i8080.a, 1);
+    //         assert_eq!(i8080.get_flag(Flag::A), true);
+    //         assert_eq!(i8080.get_flag(Flag::C), true);
+    //     }
+    //     #[test]
+    //     fn add() {
+    //         let mut i8080 = i8080!();
+    //         i8080.d = 0x2E;
+    //         i8080.a = 0x6C;
+    //         i8080.add(Register::D);
+    //         assert_eq!(i8080.a, 0x9A);
+    //         assert_eq!(i8080.get_flag(Flag::Z), false);
+    //         assert_eq!(i8080.get_flag(Flag::C), false);
+    //         assert_eq!(i8080.get_flag(Flag::P), true);
+    //         assert_eq!(i8080.get_flag(Flag::S), true);
+    //         assert_eq!(i8080.get_flag(Flag::A), true);
+    //     }
+    //     #[test]
+    //     fn add_m() {
+    //         let mut i8080 = i8080!();
+    //         let location = 0x300;
+    //         i8080.write_u8(location, 0x2E);
+    //         i8080.set_register_pair(RegisterPair::H, location);
+    //         i8080.a = 0x6C;
+    //         i8080.add_m();
+    //         assert_eq!(i8080.a, 0x9A);
+    //         assert_eq!(i8080.get_flag(Flag::Z), false);
+    //         assert_eq!(i8080.get_flag(Flag::C), false);
+    //         assert_eq!(i8080.get_flag(Flag::P), true);
+    //         assert_eq!(i8080.get_flag(Flag::S), true);
+    //         assert_eq!(i8080.get_flag(Flag::A), true);
+    //     }
+    //     #[test]
+    //     fn adc() {
+    //         let mut i8080 = i8080!();
+    //         i8080.set_carry(1);
+    //         i8080.c = 0x3D;
+    //         i8080.a = 0x42;
+    //         i8080.adc(Register::C);
+    //         assert_eq!(i8080.a, 0x80);
+    //         assert_eq!(i8080.get_flag(Flag::Z), false);
+    //         assert_eq!(i8080.get_flag(Flag::C), false);
+    //         assert_eq!(i8080.get_flag(Flag::P), false);
+    //         assert_eq!(i8080.get_flag(Flag::S), true);
+    //         assert_eq!(i8080.get_flag(Flag::A), true);
+    //     }
+    //     #[test]
+    //     fn adc_m() {
+    //         let mut i8080 = i8080!();
+    //         let location = 0x300;
+    //         i8080.write_u8(location, 0x3D);
+    //         i8080.set_register_pair(RegisterPair::H, location);
+    //         i8080.set_carry(1);
+    //         i8080.a = 0x42;
+    //         i8080.adc_m();
+    //         assert_eq!(i8080.a, 0x80);
+    //         assert_eq!(i8080.get_flag(Flag::Z), false);
+    //         assert_eq!(i8080.get_flag(Flag::C), false);
+    //         assert_eq!(i8080.get_flag(Flag::P), false);
+    //         assert_eq!(i8080.get_flag(Flag::S), true);
+    //         assert_eq!(i8080.get_flag(Flag::A), true);
+    //     }
+    //     #[test]
+    //     fn sub() {
+    //         let mut i8080 = i8080!();
+    //         i8080.a = 0x3E;
+    //         i8080.sub(Register::A);
+    //         assert_eq!(i8080.a, 0x0);
+    //         assert_eq!(i8080.get_flag(Flag::Z), true);
+    //         assert_eq!(i8080.get_flag(Flag::C), false);
+    //         assert_eq!(i8080.get_flag(Flag::P), true);
+    //         assert_eq!(i8080.get_flag(Flag::S), false);
+    //     }
+    //     #[test]
+    //     fn sub_m() {
+    //         let mut i8080 = i8080!();
+    //         let location = 0x300;
+    //         i8080.write_u8(location, 0x3E);
+    //         i8080.set_register_pair(RegisterPair::H, location);
+    //         i8080.a = 0x3E;
+    //         i8080.sub_m();
+    //         assert_eq!(i8080.a, 0x0);
+    //         assert_eq!(i8080.get_flag(Flag::Z), true);
+    //         assert_eq!(i8080.get_flag(Flag::C), false);
+    //         assert_eq!(i8080.get_flag(Flag::P), true);
+    //         assert_eq!(i8080.get_flag(Flag::S), false);
+    //     }
+    //     #[test]
+    //     fn sbb() {
+    //         let mut i8080 = i8080!();
+    //         i8080.set_carry(1);
+    //         i8080.l = 0x02;
+    //         i8080.a = 0x04;
+    //         i8080.sbb(Register::L);
+    //         assert_eq!(i8080.a, 0x01);
+    //         assert_eq!(i8080.get_flag(Flag::Z), false);
+    //         assert_eq!(i8080.get_flag(Flag::C), false);
+    //         assert_eq!(i8080.get_flag(Flag::P), false);
+    //         assert_eq!(i8080.get_flag(Flag::S), false);
+    //     }  
+    //     #[test]
+    //     fn sbb_m() {
+    //         let mut i8080 = i8080!();
+    //         let location = 0x300;
+    //         i8080.write_u8(location, 0x02);
+    //         i8080.set_register_pair(RegisterPair::H, location);
+    //         i8080.set_carry(1);
+    //         i8080.a = 0x04;
+    //         i8080.sbb_m();
+    //         assert_eq!(i8080.a, 0x01);
+    //         assert_eq!(i8080.get_flag(Flag::Z), false);
+    //         assert_eq!(i8080.get_flag(Flag::C), false);
+    //         assert_eq!(i8080.get_flag(Flag::P), false);
+    //         assert_eq!(i8080.get_flag(Flag::S), false);
+    //     }
+    //     #[test]
+    //     fn ana() {
+    //         let mut i8080 = i8080!();
+    //         i8080.a = 0xFC;
+    //         i8080.c = 0x0F;
+    //         i8080.ana(Register::C);
+    //         assert_eq!(i8080.a, 0x0C);
+    //         assert_eq!(i8080.get_flag(Flag::Z), false);
+    //         assert_eq!(i8080.get_flag(Flag::C), false);
+    //         assert_eq!(i8080.get_flag(Flag::P), true);
+    //         assert_eq!(i8080.get_flag(Flag::S), false);
+    //     }
+    //     #[test]
+    //     fn ana_m() {
+    //         let mut i8080 = i8080!();
+    //         let location = 0x300;
+    //         i8080.write_u8(location, 0x0F);
+    //         i8080.set_register_pair(RegisterPair::H, location);
+    //         i8080.a = 0xFC;
+    //         i8080.ana_m();
+    //         assert_eq!(i8080.a, 0x0C);
+    //         assert_eq!(i8080.get_flag(Flag::Z), false);
+    //         assert_eq!(i8080.get_flag(Flag::C), false);
+    //         assert_eq!(i8080.get_flag(Flag::P), true);
+    //         assert_eq!(i8080.get_flag(Flag::S), false);
+    //     }
+    //     #[test]
+    //     fn xra() {
+    //         let mut i8080 = i8080!();
+    //         i8080.a = 0b10110001;
+    //         i8080.b = 0b11010110;
+    //         i8080.xra(Register::B);
+    //         assert_eq!(i8080.a, 0b01100111);
+    //         assert_eq!(i8080.get_flag(Flag::Z), false);
+    //         assert_eq!(i8080.get_flag(Flag::C), false);
+    //         assert_eq!(i8080.get_flag(Flag::P), false);
+    //         assert_eq!(i8080.get_flag(Flag::S), false);
+    //     }
+    //     #[test]
+    //     fn xra_m() {
+    //         let mut i8080 = i8080!();
+    //         let location = 0x300;
+    //         i8080.write_u8(location, 0b11010110);
+    //         i8080.set_register_pair(RegisterPair::H, location);
+    //         i8080.a = 0b10110001;
+    //         i8080.xra_m();
+    //         assert_eq!(i8080.a, 0b01100111);
+    //         assert_eq!(i8080.get_flag(Flag::Z), false);
+    //         assert_eq!(i8080.get_flag(Flag::C), false);
+    //         assert_eq!(i8080.get_flag(Flag::P), false);
+    //         assert_eq!(i8080.get_flag(Flag::S), false);
+    //     }
+    //     #[test]
+    //     fn ora() {
+    //         let mut i8080 = i8080!();
+    //         i8080.a = 0x33;
+    //         i8080.c = 0x0F;
+    //         i8080.ora(Register::C);
+    //         assert_eq!(i8080.a, 0x3F);
+    //         assert_eq!(i8080.get_flag(Flag::Z), false);
+    //         assert_eq!(i8080.get_flag(Flag::C), false);
+    //         assert_eq!(i8080.get_flag(Flag::P), true);
+    //         assert_eq!(i8080.get_flag(Flag::S), false);
+    //     }
+    //     #[test]
+    //     fn ora_m() {
+    //         let mut i8080 = i8080!();
+    //         let location = 0x300;
+    //         i8080.write_u8(location, 0x0F);
+    //         i8080.set_register_pair(RegisterPair::H, location);
+    //         i8080.a = 0x33;
+    //         i8080.ora_m();
+    //         assert_eq!(i8080.a, 0x3F);
+    //         assert_eq!(i8080.get_flag(Flag::Z), false);
+    //         assert_eq!(i8080.get_flag(Flag::C), false);
+    //         assert_eq!(i8080.get_flag(Flag::P), true);
+    //         assert_eq!(i8080.get_flag(Flag::S), false);
+    //     }
+    //     #[test]
+    //     fn cmp() {
+    //         let mut i8080 = i8080!();
+    //         i8080.a = 0x0A;
+    //         i8080.e = 0x05;
+    //         i8080.cmp(Register::E);
+    //         assert_eq!(i8080.a, 0x0A);
+    //         assert_eq!(i8080.e, 0x05);
+    //         assert_eq!(i8080.get_flag(Flag::Z), false);
+    //         assert_eq!(i8080.get_flag(Flag::C), false);
+    //         assert_eq!(i8080.get_flag(Flag::P), true);
+    //         assert_eq!(i8080.get_flag(Flag::S), false);
+    //
+    //         i8080.a = 0x02;
+    //         i8080.e = 0x05;
+    //         i8080.cmp(Register::E);
+    //         assert_eq!(i8080.a, 0x02);
+    //         assert_eq!(i8080.e, 0x05);
+    //         assert_eq!(i8080.get_flag(Flag::Z), false);
+    //         assert_eq!(i8080.get_flag(Flag::C), true);
+    //         assert_eq!(i8080.get_flag(Flag::P), false);
+    //         assert_eq!(i8080.get_flag(Flag::S), true);
+    //
+    //         i8080.a = 0b11100101;
+    //         i8080.e = 0x05;
+    //         i8080.cmp(Register::E);
+    //         assert_eq!(i8080.a, 0b11100101);
+    //         assert_eq!(i8080.e, 0x05);
+    //         assert_eq!(i8080.get_flag(Flag::Z), false);
+    //         assert_eq!(i8080.get_flag(Flag::C), false);
+    //         assert_eq!(i8080.get_flag(Flag::P), false);
+    //         assert_eq!(i8080.get_flag(Flag::S), true);
+    //     }
+    //     #[test]
+    //     fn cmp_m() {
+    //         let mut i8080 = i8080!();
+    //         let location = 0x300;
+    //         i8080.write_u8(location, 0x05);
+    //         i8080.set_register_pair(RegisterPair::H, location);
+    //         i8080.a = 0x02;
+    //         i8080.cmp_m();
+    //         assert_eq!(i8080.read_u8(location), 0x05);
+    //         assert_eq!(i8080.a, 0x02);
+    //         assert_eq!(i8080.get_flag(Flag::Z), false);
+    //         assert_eq!(i8080.get_flag(Flag::C), true);
+    //         assert_eq!(i8080.get_flag(Flag::P), false);
+    //         assert_eq!(i8080.get_flag(Flag::S), true);
+    //     }
+    //     #[test]
+    //     fn adi() {
+    //         let mut i8080 = i8080![0x42];
+    //         i8080.a = 0x14;
+    //         i8080.adi();
+    //         assert_eq!(i8080.a, 0x56);
+    //         assert_eq!(i8080.get_flag(Flag::Z), false);
+    //         assert_eq!(i8080.get_flag(Flag::C), false);
+    //         assert_eq!(i8080.get_flag(Flag::P), true);
+    //         assert_eq!(i8080.get_flag(Flag::S), false);
+    //     }
+    //     #[test]
+    //     fn aci() {
+    //         let mut i8080 = i8080![0x42];
+    //         i8080.a = 0x14;
+    //         i8080.set_carry(1);
+    //         i8080.aci();
+    //         assert_eq!(i8080.a, 0x57);
+    //         assert_eq!(i8080.get_flag(Flag::Z), false);
+    //         assert_eq!(i8080.get_flag(Flag::C), false);
+    //         assert_eq!(i8080.get_flag(Flag::P), false);
+    //         assert_eq!(i8080.get_flag(Flag::S), false);
+    //     }
+    //     #[test]
+    //     fn sui() {
+    //         let mut i8080 = i8080![0x1];
+    //         i8080.a = 0x00;
+    //         i8080.sui();
+    //         assert_eq!(i8080.a, 0xFF);
+    //         assert_eq!(i8080.get_flag(Flag::Z), false);
+    //         assert_eq!(i8080.get_flag(Flag::C), true);
+    //         assert_eq!(i8080.get_flag(Flag::P), true);
+    //         assert_eq!(i8080.get_flag(Flag::S), true);
+    //     }
+    //     #[test]
+    //     fn sbi() {
+    //         let mut i8080 = i8080![0x1];
+    //         i8080.a = 0x00;
+    //         i8080.set_carry(1);
+    //         i8080.sbi();
+    //         assert_eq!(i8080.a, 0xFE);
+    //         assert_eq!(i8080.get_flag(Flag::Z), false);
+    //         assert_eq!(i8080.get_flag(Flag::C), true);
+    //         assert_eq!(i8080.get_flag(Flag::P), false);
+    //         assert_eq!(i8080.get_flag(Flag::S), true);
+    //     }
+    //     #[test]
+    //     fn ani() {
+    //         let mut i8080 = i8080![0x0F];
+    //         i8080.a = 0x3A;
+    //         i8080.ani();
+    //         assert_eq!(i8080.a, 0x0A);
+    //         assert_eq!(i8080.get_flag(Flag::Z), false);
+    //         assert_eq!(i8080.get_flag(Flag::C), false);
+    //         assert_eq!(i8080.get_flag(Flag::P), true);
+    //         assert_eq!(i8080.get_flag(Flag::S), false);
+    //     }
+    //     #[test]
+    //     fn xri() {
+    //         let mut i8080 = i8080![0x81];
+    //         i8080.a = 0x3B;
+    //         i8080.xri();
+    //         assert_eq!(i8080.a, 0b10111010);
+    //         assert_eq!(i8080.get_flag(Flag::Z), false);
+    //         assert_eq!(i8080.get_flag(Flag::C), false);
+    //         assert_eq!(i8080.get_flag(Flag::P), false);
+    //         assert_eq!(i8080.get_flag(Flag::S), true);
+    //     }
+    //     #[test]
+    //     fn ori() {
+    //         let mut i8080 = i8080![0x0F];
+    //         i8080.a = 0xB5;
+    //         i8080.ori();
+    //         assert_eq!(i8080.a, 0xBF);
+    //         assert_eq!(i8080.get_flag(Flag::Z), false);
+    //         assert_eq!(i8080.get_flag(Flag::C), false);
+    //         assert_eq!(i8080.get_flag(Flag::P), false);
+    //         assert_eq!(i8080.get_flag(Flag::S), true);
+    //     }
+    //     #[test]
+    //     fn cpi() {
+    //         let mut i8080 = i8080![0x40];
+    //         i8080.a = 0x4A;
+    //         i8080.cpi();
+    //         assert_eq!(i8080.a, 0x4A);
+    //         assert_eq!(i8080.get_flag(Flag::Z), false);
+    //         assert_eq!(i8080.get_flag(Flag::C), false);
+    //         assert_eq!(i8080.get_flag(Flag::P), true);
+    //         assert_eq!(i8080.get_flag(Flag::S), false);
+    //     }
+    //     #[test]
+    //     fn inx() {
+    //         let mut i8080 = i8080!();
+    //         i8080.d = 0x38;
+    //         i8080.e = 0xFF;
+    //         i8080.inx(RegisterPair::D);
+    //         assert_eq!(i8080.d, 0x39);
+    //         assert_eq!(i8080.e, 0x00);
+    //     }
+    //     #[test]
+    //     fn inx_sp() {
+    //         let mut i8080 = i8080!();
+    //         i8080.sp = 0xFFFF;
+    //         i8080.inx_sp();
+    //         assert_eq!(i8080.sp, 0);
+    //     }
+    //     #[test]
+    //     fn dcx() {
+    //         let mut i8080 = i8080!();
+    //         i8080.h = 0x98;
+    //         i8080.l = 0x00;
+    //         i8080.dcx(RegisterPair::H);
+    //         assert_eq!(i8080.h, 0x97);
+    //         assert_eq!(i8080.l, 0xFF);
+    //     }
+    //     #[test]
+    //     fn dcx_sp() {
+    //         let mut i8080 = i8080!();
+    //         i8080.sp = 0xFFFF;
+    //         i8080.dcx_sp();
+    //         assert_eq!(i8080.sp, 0xFFFE);
+    //     }
+    //     #[test]
+    //     fn dad() {
+    //         let mut i8080 = i8080!();
+    //         i8080.set_register_pair(RegisterPair::B, 0x339F);
+    //         i8080.set_register_pair(RegisterPair::H, 0xA17B);
+    //         i8080.dad(RegisterPair::B);
+    //         assert_eq!(i8080.get_register_pair(RegisterPair::H), 0xD51A);
+    //         assert_eq!(i8080.get_flag(Flag::C), false);
+    //
+    //         i8080.set_register_pair(RegisterPair::B, 0xFFDD);
+    //         i8080.set_register_pair(RegisterPair::H, 0x0123);
+    //         i8080.dad(RegisterPair::B);
+    //         assert_eq!(i8080.get_register_pair(RegisterPair::H), 0x0100);
+    //         assert_eq!(i8080.get_flag(Flag::C), true);
+    //
+    //         i8080.sp = 0x1232;
+    //         i8080.dad_sp();
+    //         assert_eq!(i8080.get_register_pair(RegisterPair::H), 0x1332);
+    //         assert_eq!(i8080.get_flag(Flag::C), false);
+    //     }
+    // }
     #[cfg(test)]
-    mod opcode_tests {
-        use super::*;
-        #[test]
-        fn lxi() {
-            let mut i8080 = i8080![0x3, 0x1];
-            i8080.lxi(RegisterPair::H);
-            assert_eq!(i8080.h, 0x1);
-            assert_eq!(i8080.l, 0x3);
+    mod test_roms {
+        use crate::I8080;
+        fn port_out(i8080: &I8080, device: u8, _value: u8) {
+            if device == 1 {
+                let operation = i8080.c;
+                match operation {
+                    9 => {
+                        let address = i8080.get_register_pair(crate::RegisterPair::D);
+                        let mut i = 0;
+                        while i8080.memory[address as usize + i] as char != '$' {
+                            print!("{}", i8080.memory[address as usize + i] as char);
+                            i += 1;
+                        }
+                    },
+                    2 => {
+                        print!("{}", i8080.e as char);
+                    },
+                    _ => {
+                    },
+                }
+            }
         }
         #[test]
-        fn lxi_sp() {
-            let mut i8080 = i8080![0xBC, 0x3A];
-            i8080.lxi_sp();
-            assert_eq!(i8080.sp, 0x3ABC);
-        }
-        #[test]
-        fn pop() {
-            let mut i8080 = i8080!();
-            i8080.write_u8(i8080.sp, 0x3D);
-            i8080.write_u8(i8080.sp + 1, 0x93);
-            i8080.pop(RegisterPair::H);
-            assert_eq!(i8080.h, 0x93);
-            assert_eq!(i8080.l, 0x3D);
-            assert_eq!(i8080.sp, TESTS_DEFAULT_SP + 2);
+        fn cpu_test() {
+            let mut i8080 = crate::I8080::new(64*1024, 8, port_out);
+            i8080.load("TST8080.COM", 0x0100, 0);
+
+            i8080.memory[0x0000] = 0xD3;
+            i8080.memory[0x0001] = 0x00;
+
+            i8080.memory[0x0005] = 0xD3;
+            i8080.memory[0x0006] = 0x01;
+            i8080.memory[0x0007] = 0xC9;
+            
+            for i in 0..10000000 {
+                i8080.print();
+                let cur = i8080.opcode_count;
+                while i8080.opcode_count == cur {
+                    i8080.emulate();
+                }
+                
+                // if i8080.pc == 0x0005 {
+                //     match i8080.get_register(crate::Register::C)  {
+                //         9 => {
+                //             let address = i8080.get_register_pair(crate::RegisterPair::H);
+                //             let mut i = 0;
+                //             while i8080.memory[address as usize + i] as char != '$' {
+                //                 eprint!("{}", i8080.memory[address as usize + i] as char);
+                //                 i += 1;
+                //             }
+                //             i8080.pc = 0x0100;
+                //         },
+                //         2 => {
+                //                 eprint!("E"); 
+                //                 i8080.pc = 0x0100;
+                //         },
+                //         _ => {
+                //         },
+                //     }
+                // }
+                if i8080.opcode_count > 130 {
+                    break
+                }
+            }
         }
 
-        #[test]
-        fn push() {
-            let mut i8080 = i8080!();
-            i8080.d = 0x8F;
-            i8080.e = 0x9D;
-            i8080.push(RegisterPair::D);
-            assert_eq!(i8080.d, 0x8F);
-            assert_eq!(i8080.e, 0x9D);
-            assert_eq!(i8080.sp, TESTS_DEFAULT_SP - 2);
-            assert_eq!(i8080.read_u8(i8080.sp), 0x9D);
-            assert_eq!(i8080.read_u8(i8080.sp + 1), 0x8F);
-        }
-        #[test]
-        fn shld() {
-            let mut i8080 = i8080![0xA, 0x1];
-            i8080.h = 0xAE;
-            i8080.l = 0x29;
-            i8080.shld();
-            assert_eq!(i8080.read_u8(0x10A), 0x29);
-            assert_eq!(i8080.read_u8(0x10B), 0xAE);
-        }
-        #[test]
-        fn lhld() {
-            let mut i8080 = i8080![0x5B, 0x2];
-            i8080.write_u8(0x25B, 0xFF);
-            i8080.write_u8(0x25C, 0x03);
-            i8080.lhld();
-            assert_eq!(i8080.l, 0xFF);
-            assert_eq!(i8080.h, 0x03);
-        }
-        #[test]
-        fn xthl() {
-            let mut i8080 = i8080!();
-            i8080.write_u8(i8080.sp, 0xF0);
-            i8080.write_u8(i8080.sp + 1, 0x0D);
-            i8080.h = 0x0B;
-            i8080.l = 0x3C;
-            i8080.xthl();
-            assert_eq!(i8080.read_u8(i8080.sp), 0x3C);
-            assert_eq!(i8080.read_u8(i8080.sp + 1), 0x0B);
-            assert_eq!(i8080.h, 0x0D);
-            assert_eq!(i8080.l, 0xF0);
-        }
-        #[test]
-        fn sphl() {
-            let mut i8080 = i8080!();
-            i8080.h = 0x50;
-            i8080.l = 0x6C;
-            i8080.sphl();
-            assert_eq!(i8080.sp, 0x506C);
-        }
-        #[test]
-        fn xchg() {
-            let mut i8080 = i8080!();
-            i8080.d = 0x33;
-            i8080.e = 0x55;
-            i8080.h = 0x00;
-            i8080.l = 0xFF;
-            i8080.xchg();
-            assert_eq!(i8080.d, 0x00);
-            assert_eq!(i8080.e, 0xFF);
-            assert_eq!(i8080.h, 0x33);
-            assert_eq!(i8080.l, 0x55);
-        }
-        #[test]
-        fn stax() {
-            let mut i8080 = i8080!();
-            i8080.a = 0xCC;
-            i8080.b = 0x02;
-            i8080.c = 0x16;
-            i8080.stax(RegisterPair::B);
-            assert_eq!(i8080.read_u8(0x0216), i8080.a);
-        }
-        #[test]
-        fn ldax() {
-            let mut i8080 = i8080!();
-            i8080.write_u8(0x0216, 0xCC);
-            i8080.d = 0x02;
-            i8080.e = 0x16;
-            i8080.ldax(RegisterPair::D);
-            assert_eq!(i8080.read_u8(0x0216), i8080.a);
-        }
-        #[test]
-        fn mvi() {
-            let mut i8080 = i8080![0x02, 0x34, 0xCC];
-            i8080.mvi(Register::H);
-            assert_eq!(i8080.get_register(Register::H), 0x02);
-            i8080.mvi(Register::L);
-            assert_eq!(i8080.get_register(Register::L), 0x34);
-            i8080.mvi_m();
-            assert_eq!(i8080.read_u8(0x0234), 0xCC);
-        }
-        #[test]
-        fn mvi_m() {
-            let mut i8080 = i8080![0xCC];
-            let location = 0x0234;
-            i8080.set_register_pair(RegisterPair::H, location);
-            i8080.mvi_m();
-            assert_eq!(i8080.read_u8(location), 0xCC);
-        }
-        #[test]
-        fn sta() {
-            let mut i8080 = i8080!();
-            i8080.set_register_pair(RegisterPair::H, 0x0234);
-            i8080.set_register(Register::A, 0x12);
-            i8080.sta();
-            assert_eq!(i8080.get_register(Register::A), i8080.read_u8(0x0234));
-        }
-        #[test]
-        fn lda() {
-            let mut i8080 = i8080!();
-            i8080.write_u8(0x300, 0xFE);
-            i8080.set_register_pair(RegisterPair::H, 0x300);
-            i8080.lda();
-            assert_eq!(i8080.get_register(Register::A), i8080.read_u8(0x300));
-        }
-        #[test]
-        fn mov() {
-            let mut i8080 = i8080!();
-            i8080.set_register(Register::A, 0x13);
-            i8080.mov(Register::D, Register::A);
-            assert_eq!(i8080.get_register(Register::D), i8080.get_register(Register::A));
-        }
-        #[test]
-        fn mov_m() {
-            let mut i8080 = i8080!();
-            i8080.set_register(Register::A, 0x13);
-            i8080.set_register_pair(RegisterPair::H, 0x0300);
-            i8080.mov_m(Register::A);
-            assert_eq!(i8080.get_register(Register::A), i8080.read_u8(0x300));
-        }
-        #[test]
-        fn inr() {
-            let mut i8080 = i8080!();
-            i8080.set_register(Register::A, 0b10100010);
-            i8080.inr(Register::A);
-            assert_eq!(i8080.get_register(Register::A), 0b10100011); 
-            assert_eq!(i8080.get_flag(Flag::S), true);
-            assert_eq!(i8080.get_flag(Flag::Z), false);
-            assert_eq!(i8080.get_flag(Flag::A), true);
-            assert_eq!(i8080.get_flag(Flag::P), true);
-        }
-        #[test]
-        fn inr_m() {
-            let mut i8080 = i8080!();
-            let location = 0x300;
-            i8080.write_u8(location, 0b10100010);
-            i8080.set_register_pair(RegisterPair::H, location);
-            i8080.inr_m();
-            assert_eq!(i8080.read_u8(location), 0b10100011);
-            assert_eq!(i8080.get_flag(Flag::S), true);
-            assert_eq!(i8080.get_flag(Flag::Z), false);
-            assert_eq!(i8080.get_flag(Flag::A), true);
-            assert_eq!(i8080.get_flag(Flag::P), true);
-        }
-        #[test]
-        fn dcr() {
-            let mut i8080 = i8080!();
-            i8080.set_register(Register::A, 0b10000000);
-            i8080.dcr(Register::A);
-            assert_eq!(i8080.get_register(Register::A), 0b01111111); 
-            assert_eq!(i8080.get_flag(Flag::S), false);
-            assert_eq!(i8080.get_flag(Flag::Z), false);
-            assert_eq!(i8080.get_flag(Flag::A), true);
-            assert_eq!(i8080.get_flag(Flag::P), false);
-        }
-        #[test]
-        fn dcr_m() {
-            let mut i8080 = i8080!();
-            let location = 0x300;
-            i8080.write_u8(location, 0b10000000);
-            i8080.set_register_pair(RegisterPair::H, location);
-            i8080.dcr_m();
-            assert_eq!(i8080.read_u8(location), 0b01111111);
-            assert_eq!(i8080.get_flag(Flag::S), false);
-            assert_eq!(i8080.get_flag(Flag::Z), false);
-            assert_eq!(i8080.get_flag(Flag::A), true);
-            assert_eq!(i8080.get_flag(Flag::P), false);
-        }
-        #[test]
-        fn rlc() {
-            let mut i8080 = i8080!();
-            i8080.set_register(Register::A, 0b11110010);
-            i8080.rlc();
-            assert_eq!(i8080.a, 0b11100101);
-            assert_eq!(i8080.get_flag(Flag::C), true);
-            i8080.set_register(Register::A, 0b01100111);
-            i8080.rlc();
-            assert_eq!(i8080.a, 0b11001110);
-            assert_eq!(i8080.get_flag(Flag::C), false);
-        }
-
-        #[test]
-        fn ral() {
-            let mut i8080 = i8080!();
-            i8080.set_register(Register::A, 0b10110101);
-            i8080.ral();
-            assert_eq!(i8080.a, 0b01101010);
-            assert_eq!(i8080.get_flag(Flag::C), true);
-            i8080.ral();
-            assert_eq!(i8080.a, 0b11010101);
-            assert_eq!(i8080.get_flag(Flag::C), false);
-        }
-        #[test]
-        fn rrc() {
-            let mut i8080 = i8080!();
-            i8080.set_register(Register::A, 0b11110010);
-            i8080.rrc();
-            assert_eq!(i8080.a, 0b01111001);
-            assert_eq!(i8080.get_flag(Flag::C), false);
-            i8080.rrc();
-            assert_eq!(i8080.a, 0b10111100);
-            assert_eq!(i8080.get_flag(Flag::C), true);
-        }
-        #[test]
-        fn rar() {
-            let mut i8080 = i8080!();
-            i8080.set_register(Register::A, 0b01101010);
-            i8080.set_carry(1);
-            i8080.rar();
-            assert_eq!(i8080.a, 0b10110101);
-            assert_eq!(i8080.get_flag(Flag::C), false);
-            i8080.rar();
-            assert_eq!(i8080.a, 0b01011010);
-            assert_eq!(i8080.get_flag(Flag::C), true);
-        }
-        #[test]
-        fn stc() {
-            let mut i8080 = i8080!();
-            i8080.stc();
-            assert_eq!(i8080.get_flag(Flag::C), true);
-        }
-        #[test]
-        fn cmc() {
-            let mut i8080 = i8080!();
-            i8080.flags = 0b11000110;
-            i8080.stc();
-            assert_eq!(i8080.flags, 0b11000111);
-        }
-        #[test]
-        fn cma() {
-            let mut i8080 = i8080!();
-            i8080.a = 0b01010001;
-            i8080.cma();
-            assert_eq!(i8080.a, 0b10101110);
-        }
-        #[test]
-        fn daa() {
-            let mut i8080 = i8080!();
-            i8080.a = 0b10011011;
-            i8080.daa();
-            assert_eq!(i8080.a, 1);
-            assert_eq!(i8080.get_flag(Flag::A), true);
-            assert_eq!(i8080.get_flag(Flag::C), true);
-        }
-        #[test]
-        fn add() {
-            let mut i8080 = i8080!();
-            i8080.d = 0x2E;
-            i8080.a = 0x6C;
-            i8080.add(Register::D);
-            assert_eq!(i8080.a, 0x9A);
-            assert_eq!(i8080.get_flag(Flag::Z), false);
-            assert_eq!(i8080.get_flag(Flag::C), false);
-            assert_eq!(i8080.get_flag(Flag::P), true);
-            assert_eq!(i8080.get_flag(Flag::S), true);
-            assert_eq!(i8080.get_flag(Flag::A), true);
-        }
-        #[test]
-        fn add_m() {
-            let mut i8080 = i8080!();
-            let location = 0x300;
-            i8080.write_u8(location, 0x2E);
-            i8080.set_register_pair(RegisterPair::H, location);
-            i8080.a = 0x6C;
-            i8080.add_m();
-            assert_eq!(i8080.a, 0x9A);
-            assert_eq!(i8080.get_flag(Flag::Z), false);
-            assert_eq!(i8080.get_flag(Flag::C), false);
-            assert_eq!(i8080.get_flag(Flag::P), true);
-            assert_eq!(i8080.get_flag(Flag::S), true);
-            assert_eq!(i8080.get_flag(Flag::A), true);
-        }
-        #[test]
-        fn adc() {
-            let mut i8080 = i8080!();
-            i8080.set_carry(1);
-            i8080.c = 0x3D;
-            i8080.a = 0x42;
-            i8080.adc(Register::C);
-            assert_eq!(i8080.a, 0x80);
-            assert_eq!(i8080.get_flag(Flag::Z), false);
-            assert_eq!(i8080.get_flag(Flag::C), false);
-            assert_eq!(i8080.get_flag(Flag::P), false);
-            assert_eq!(i8080.get_flag(Flag::S), true);
-            assert_eq!(i8080.get_flag(Flag::A), true);
-        }
-        #[test]
-        fn adc_m() {
-            let mut i8080 = i8080!();
-            let location = 0x300;
-            i8080.write_u8(location, 0x3D);
-            i8080.set_register_pair(RegisterPair::H, location);
-            i8080.set_carry(1);
-            i8080.a = 0x42;
-            i8080.adc_m();
-            assert_eq!(i8080.a, 0x80);
-            assert_eq!(i8080.get_flag(Flag::Z), false);
-            assert_eq!(i8080.get_flag(Flag::C), false);
-            assert_eq!(i8080.get_flag(Flag::P), false);
-            assert_eq!(i8080.get_flag(Flag::S), true);
-            assert_eq!(i8080.get_flag(Flag::A), true);
-        }
-        #[test]
-        fn sub() {
-            let mut i8080 = i8080!();
-            i8080.a = 0x3E;
-            i8080.sub(Register::A);
-            assert_eq!(i8080.a, 0x0);
-            assert_eq!(i8080.get_flag(Flag::Z), true);
-            assert_eq!(i8080.get_flag(Flag::C), false);
-            assert_eq!(i8080.get_flag(Flag::P), true);
-            assert_eq!(i8080.get_flag(Flag::S), false);
-        }
-        #[test]
-        fn sub_m() {
-            let mut i8080 = i8080!();
-            let location = 0x300;
-            i8080.write_u8(location, 0x3E);
-            i8080.set_register_pair(RegisterPair::H, location);
-            i8080.a = 0x3E;
-            i8080.sub_m();
-            assert_eq!(i8080.a, 0x0);
-            assert_eq!(i8080.get_flag(Flag::Z), true);
-            assert_eq!(i8080.get_flag(Flag::C), false);
-            assert_eq!(i8080.get_flag(Flag::P), true);
-            assert_eq!(i8080.get_flag(Flag::S), false);
-        }
-        #[test]
-        fn sbb() {
-            let mut i8080 = i8080!();
-            i8080.set_carry(1);
-            i8080.l = 0x02;
-            i8080.a = 0x04;
-            i8080.sbb(Register::L);
-            assert_eq!(i8080.a, 0x01);
-            assert_eq!(i8080.get_flag(Flag::Z), false);
-            assert_eq!(i8080.get_flag(Flag::C), false);
-            assert_eq!(i8080.get_flag(Flag::P), false);
-            assert_eq!(i8080.get_flag(Flag::S), false);
-        }  
-        #[test]
-        fn sbb_m() {
-            let mut i8080 = i8080!();
-            let location = 0x300;
-            i8080.write_u8(location, 0x02);
-            i8080.set_register_pair(RegisterPair::H, location);
-            i8080.set_carry(1);
-            i8080.a = 0x04;
-            i8080.sbb_m();
-            assert_eq!(i8080.a, 0x01);
-            assert_eq!(i8080.get_flag(Flag::Z), false);
-            assert_eq!(i8080.get_flag(Flag::C), false);
-            assert_eq!(i8080.get_flag(Flag::P), false);
-            assert_eq!(i8080.get_flag(Flag::S), false);
-        }
-        #[test]
-        fn ana() {
-            let mut i8080 = i8080!();
-            i8080.a = 0xFC;
-            i8080.c = 0x0F;
-            i8080.ana(Register::C);
-            assert_eq!(i8080.a, 0x0C);
-            assert_eq!(i8080.get_flag(Flag::Z), false);
-            assert_eq!(i8080.get_flag(Flag::C), false);
-            assert_eq!(i8080.get_flag(Flag::P), true);
-            assert_eq!(i8080.get_flag(Flag::S), false);
-        }
-        #[test]
-        fn ana_m() {
-            let mut i8080 = i8080!();
-            let location = 0x300;
-            i8080.write_u8(location, 0x0F);
-            i8080.set_register_pair(RegisterPair::H, location);
-            i8080.a = 0xFC;
-            i8080.ana_m();
-            assert_eq!(i8080.a, 0x0C);
-            assert_eq!(i8080.get_flag(Flag::Z), false);
-            assert_eq!(i8080.get_flag(Flag::C), false);
-            assert_eq!(i8080.get_flag(Flag::P), true);
-            assert_eq!(i8080.get_flag(Flag::S), false);
-        }
-        #[test]
-        fn xra() {
-            let mut i8080 = i8080!();
-            i8080.a = 0b10110001;
-            i8080.b = 0b11010110;
-            i8080.xra(Register::B);
-            assert_eq!(i8080.a, 0b01100111);
-            assert_eq!(i8080.get_flag(Flag::Z), false);
-            assert_eq!(i8080.get_flag(Flag::C), false);
-            assert_eq!(i8080.get_flag(Flag::P), false);
-            assert_eq!(i8080.get_flag(Flag::S), false);
-        }
-        #[test]
-        fn xra_m() {
-            let mut i8080 = i8080!();
-            let location = 0x300;
-            i8080.write_u8(location, 0b11010110);
-            i8080.set_register_pair(RegisterPair::H, location);
-            i8080.a = 0b10110001;
-            i8080.xra_m();
-            assert_eq!(i8080.a, 0b01100111);
-            assert_eq!(i8080.get_flag(Flag::Z), false);
-            assert_eq!(i8080.get_flag(Flag::C), false);
-            assert_eq!(i8080.get_flag(Flag::P), false);
-            assert_eq!(i8080.get_flag(Flag::S), false);
-        }
-        #[test]
-        fn ora() {
-            let mut i8080 = i8080!();
-            i8080.a = 0x33;
-            i8080.c = 0x0F;
-            i8080.ora(Register::C);
-            assert_eq!(i8080.a, 0x3F);
-            assert_eq!(i8080.get_flag(Flag::Z), false);
-            assert_eq!(i8080.get_flag(Flag::C), false);
-            assert_eq!(i8080.get_flag(Flag::P), true);
-            assert_eq!(i8080.get_flag(Flag::S), false);
-        }
-        #[test]
-        fn ora_m() {
-            let mut i8080 = i8080!();
-            let location = 0x300;
-            i8080.write_u8(location, 0x0F);
-            i8080.set_register_pair(RegisterPair::H, location);
-            i8080.a = 0x33;
-            i8080.ora_m();
-            assert_eq!(i8080.a, 0x3F);
-            assert_eq!(i8080.get_flag(Flag::Z), false);
-            assert_eq!(i8080.get_flag(Flag::C), false);
-            assert_eq!(i8080.get_flag(Flag::P), true);
-            assert_eq!(i8080.get_flag(Flag::S), false);
-        }
-        #[test]
-        fn cmp() {
-            let mut i8080 = i8080!();
-            i8080.a = 0x0A;
-            i8080.e = 0x05;
-            i8080.cmp(Register::E);
-            assert_eq!(i8080.a, 0x0A);
-            assert_eq!(i8080.e, 0x05);
-            assert_eq!(i8080.get_flag(Flag::Z), false);
-            assert_eq!(i8080.get_flag(Flag::C), false);
-            assert_eq!(i8080.get_flag(Flag::P), true);
-            assert_eq!(i8080.get_flag(Flag::S), false);
-
-            i8080.a = 0x02;
-            i8080.e = 0x05;
-            i8080.cmp(Register::E);
-            assert_eq!(i8080.a, 0x02);
-            assert_eq!(i8080.e, 0x05);
-            assert_eq!(i8080.get_flag(Flag::Z), false);
-            assert_eq!(i8080.get_flag(Flag::C), true);
-            assert_eq!(i8080.get_flag(Flag::P), false);
-            assert_eq!(i8080.get_flag(Flag::S), true);
-
-            i8080.a = 0b11100101;
-            i8080.e = 0x05;
-            i8080.cmp(Register::E);
-            assert_eq!(i8080.a, 0b11100101);
-            assert_eq!(i8080.e, 0x05);
-            assert_eq!(i8080.get_flag(Flag::Z), false);
-            assert_eq!(i8080.get_flag(Flag::C), false);
-            assert_eq!(i8080.get_flag(Flag::P), false);
-            assert_eq!(i8080.get_flag(Flag::S), true);
-        }
-        #[test]
-        fn cmp_m() {
-            let mut i8080 = i8080!();
-            let location = 0x300;
-            i8080.write_u8(location, 0x05);
-            i8080.set_register_pair(RegisterPair::H, location);
-            i8080.a = 0x02;
-            i8080.cmp_m();
-            assert_eq!(i8080.read_u8(location), 0x05);
-            assert_eq!(i8080.a, 0x02);
-            assert_eq!(i8080.get_flag(Flag::Z), false);
-            assert_eq!(i8080.get_flag(Flag::C), true);
-            assert_eq!(i8080.get_flag(Flag::P), false);
-            assert_eq!(i8080.get_flag(Flag::S), true);
-        }
-        #[test]
-        fn adi() {
-            let mut i8080 = i8080![0x42];
-            i8080.a = 0x14;
-            i8080.adi();
-            assert_eq!(i8080.a, 0x56);
-            assert_eq!(i8080.get_flag(Flag::Z), false);
-            assert_eq!(i8080.get_flag(Flag::C), false);
-            assert_eq!(i8080.get_flag(Flag::P), true);
-            assert_eq!(i8080.get_flag(Flag::S), false);
-        }
-        #[test]
-        fn aci() {
-            let mut i8080 = i8080![0x42];
-            i8080.a = 0x14;
-            i8080.set_carry(1);
-            i8080.aci();
-            assert_eq!(i8080.a, 0x57);
-            assert_eq!(i8080.get_flag(Flag::Z), false);
-            assert_eq!(i8080.get_flag(Flag::C), false);
-            assert_eq!(i8080.get_flag(Flag::P), false);
-            assert_eq!(i8080.get_flag(Flag::S), false);
-        }
-        #[test]
-        fn sui() {
-            let mut i8080 = i8080![0x1];
-            i8080.a = 0x00;
-            i8080.sui();
-            assert_eq!(i8080.a, 0xFF);
-            assert_eq!(i8080.get_flag(Flag::Z), false);
-            assert_eq!(i8080.get_flag(Flag::C), true);
-            assert_eq!(i8080.get_flag(Flag::P), true);
-            assert_eq!(i8080.get_flag(Flag::S), true);
-        }
-        #[test]
-        fn sbi() {
-            let mut i8080 = i8080![0x1];
-            i8080.a = 0x00;
-            i8080.set_carry(1);
-            i8080.sbi();
-            assert_eq!(i8080.a, 0xFE);
-            assert_eq!(i8080.get_flag(Flag::Z), false);
-            assert_eq!(i8080.get_flag(Flag::C), true);
-            assert_eq!(i8080.get_flag(Flag::P), false);
-            assert_eq!(i8080.get_flag(Flag::S), true);
-        }
-        #[test]
-        fn ani() {
-            let mut i8080 = i8080![0x0F];
-            i8080.a = 0x3A;
-            i8080.ani();
-            assert_eq!(i8080.a, 0x0A);
-            assert_eq!(i8080.get_flag(Flag::Z), false);
-            assert_eq!(i8080.get_flag(Flag::C), false);
-            assert_eq!(i8080.get_flag(Flag::P), true);
-            assert_eq!(i8080.get_flag(Flag::S), false);
-        }
-        #[test]
-        fn xri() {
-            let mut i8080 = i8080![0x81];
-            i8080.a = 0x3B;
-            i8080.xri();
-            assert_eq!(i8080.a, 0b10111010);
-            assert_eq!(i8080.get_flag(Flag::Z), false);
-            assert_eq!(i8080.get_flag(Flag::C), false);
-            assert_eq!(i8080.get_flag(Flag::P), false);
-            assert_eq!(i8080.get_flag(Flag::S), true);
-        }
-        #[test]
-        fn ori() {
-            let mut i8080 = i8080![0x0F];
-            i8080.a = 0xB5;
-            i8080.ori();
-            assert_eq!(i8080.a, 0xBF);
-            assert_eq!(i8080.get_flag(Flag::Z), false);
-            assert_eq!(i8080.get_flag(Flag::C), false);
-            assert_eq!(i8080.get_flag(Flag::P), false);
-            assert_eq!(i8080.get_flag(Flag::S), true);
-        }
-        #[test]
-        fn cpi() {
-            let mut i8080 = i8080![0x40];
-            i8080.a = 0x4A;
-            i8080.cpi();
-            assert_eq!(i8080.a, 0x4A);
-            assert_eq!(i8080.get_flag(Flag::Z), false);
-            assert_eq!(i8080.get_flag(Flag::C), false);
-            assert_eq!(i8080.get_flag(Flag::P), true);
-            assert_eq!(i8080.get_flag(Flag::S), false);
-        }
-        #[test]
-        fn inx() {
-            let mut i8080 = i8080!();
-            i8080.d = 0x38;
-            i8080.e = 0xFF;
-            i8080.inx(RegisterPair::D);
-            assert_eq!(i8080.d, 0x39);
-            assert_eq!(i8080.e, 0x00);
-        }
-        #[test]
-        fn inx_sp() {
-            let mut i8080 = i8080!();
-            i8080.sp = 0xFFFF;
-            i8080.inx_sp();
-            assert_eq!(i8080.sp, 0);
-        }
-        #[test]
-        fn dcx() {
-            let mut i8080 = i8080!();
-            i8080.h = 0x98;
-            i8080.l = 0x00;
-            i8080.dcx(RegisterPair::H);
-            assert_eq!(i8080.h, 0x97);
-            assert_eq!(i8080.l, 0xFF);
-        }
-        #[test]
-        fn dcx_sp() {
-            let mut i8080 = i8080!();
-            i8080.sp = 0xFFFF;
-            i8080.dcx_sp();
-            assert_eq!(i8080.sp, 0xFFFE);
-        }
-        #[test]
-        fn dad() {
-            let mut i8080 = i8080!();
-            i8080.set_register_pair(RegisterPair::B, 0x339F);
-            i8080.set_register_pair(RegisterPair::H, 0xA17B);
-            i8080.dad(RegisterPair::B);
-            assert_eq!(i8080.get_register_pair(RegisterPair::H), 0xD51A);
-            assert_eq!(i8080.get_flag(Flag::C), false);
-
-            i8080.set_register_pair(RegisterPair::B, 0xFFDD);
-            i8080.set_register_pair(RegisterPair::H, 0x0123);
-            i8080.dad(RegisterPair::B);
-            assert_eq!(i8080.get_register_pair(RegisterPair::H), 0x0100);
-            assert_eq!(i8080.get_flag(Flag::C), true);
-
-            i8080.sp = 0x1232;
-            i8080.dad_sp();
-            assert_eq!(i8080.get_register_pair(RegisterPair::H), 0x1332);
-            assert_eq!(i8080.get_flag(Flag::C), false);
-        }
     }
 }

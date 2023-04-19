@@ -1,11 +1,9 @@
-[package]
-name = "i8080_rs"
-version = "0.1.0"
-edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
-[dependencies]
+[workspace]
+resolver = "2"
+members = [
+    "i8080",
+    "invaders",
+]
 
 [profile.dev]
 overflow-checks = false
